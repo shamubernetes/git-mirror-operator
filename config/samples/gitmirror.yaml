@@ -1,0 +1,32 @@
+apiVersion: mirror.maude.dev/v1alpha1
+kind: GitMirror
+metadata:
+  name: source-repo
+  namespace: git-mirror-operator-system
+spec:
+  provider: github
+  github:
+    owner: example
+    repo: source-repo
+    webhookSecretRef:
+      name: source-repo-github-webhook
+      key: secret
+  source:
+    url: git@github.com:example/source-repo.git
+    sshSecretRef:
+      name: source-repo-source-ssh
+      key: ssh-privatekey
+  target:
+    url: git@codeberg.org:example/source-repo.git
+    sshSecretRef:
+      name: source-repo-target-ssh
+      key: ssh-privatekey
+  mirror:
+    mode: exact
+    includeTags: true
+    prune: true
+  fallback:
+    schedule: "0 */6 * * *"
+  job:
+    ttlSecondsAfterFinished: 3600
+    activeDeadlineSeconds: 1800

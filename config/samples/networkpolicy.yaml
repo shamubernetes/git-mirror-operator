@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: git-mirror-operator-webhook
+  namespace: git-mirror-operator-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: git-mirror-operator
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8082
+  egress:
+    - {}
