@@ -1,8 +1,10 @@
 apiVersion: mirror.maude.dev/v1alpha1
 kind: GitMirror
 metadata:
+  labels:
+    app.kubernetes.io/name: git-mirror-operator
+    app.kubernetes.io/managed-by: kustomize
   name: source-repo
-  namespace: git-mirror-operator-system
 spec:
   provider: github
   github:

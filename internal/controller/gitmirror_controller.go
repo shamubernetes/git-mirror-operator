@@ -1,3 +1,19 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package controller
 
 import (
@@ -16,12 +32,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// GitMirrorReconciler reconciles a GitMirror object.
 type GitMirrorReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	DefaultSyncImage string
 	Clock            func() time.Time
 }
+
+// +kubebuilder:rbac:groups=mirror.maude.dev,resources=gitmirrors,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=mirror.maude.dev,resources=gitmirrors/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create;get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -41,11 +64,14 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			continue
 		}
 		followup := ApplyCompletedJobStatus(&mirror, job, now)
-		if err := updateMirrorStatus(ctx, r.Client, &mirror); err != nil {
+		if err := UpdateGitMirrorStatus(ctx, r.Client, &mirror); err != nil {
 			return ctrl.Result{}, err
 		}
 		if followup {
-			if err := r.createSyncJob(ctx, &mirror); err != nil && !apierrors.IsAlreadyExists(err) {
+			if err := r.createSyncJob(ctx, &mirror, "resync-"+now.Format(time.RFC3339Nano)); err != nil && !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, err
+			}
+			if err := UpdateGitMirrorStatus(ctx, r.Client, &mirror); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -66,13 +92,13 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				}
 			}
 			create := ApplyWebhookState(&mirror, "scheduled", now, active)
-			if err := updateMirrorStatus(ctx, r.Client, &mirror); err != nil {
-				return ctrl.Result{}, err
-			}
 			if create {
-				if err := r.createSyncJob(ctx, &mirror); err != nil {
+				if err := r.createSyncJob(ctx, &mirror, "scheduled-"+now.Format(time.RFC3339Nano)); err != nil {
 					return ctrl.Result{}, err
 				}
+			}
+			if err := UpdateGitMirrorStatus(ctx, r.Client, &mirror); err != nil {
+				return ctrl.Result{}, err
 			}
 			next, _ = NextFallbackTime(mirror.Spec.Fallback.Schedule, mirror.Status.LastTriggeredAt, r.now())
 		}
@@ -82,19 +108,24 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (r *GitMirrorReconciler) createSyncJob(ctx context.Context, mirror *mirrorv1alpha1.GitMirror) error {
-	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: r.DefaultSyncImage, Scheme: r.Scheme})
+func (r *GitMirrorReconciler) createSyncJob(ctx context.Context, mirror *mirrorv1alpha1.GitMirror, triggerID string) error {
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: r.DefaultSyncImage, Scheme: r.Scheme, TriggerID: triggerID})
 	if err != nil {
 		return err
 	}
-	mirror.Status.LastJobName = syncJob.Job.GenerateName
+	mirror.Status.LastJobName = syncJob.Job.Name
+	if mirror.Status.LastJobName == "" {
+		mirror.Status.LastJobName = syncJob.Job.GenerateName
+	}
 	return r.Create(ctx, syncJob.Job)
 }
 
+// SetupWithManager sets up the controller with the Manager.
 func (r *GitMirrorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mirrorv1alpha1.GitMirror{}).
 		Owns(&batchv1.Job{}).
+		Named("gitmirror").
 		Complete(r)
 }
 
@@ -114,11 +145,4 @@ func NextFallbackTime(spec string, lastTriggered *metav1.Time, now time.Time) (t
 		return now, nil
 	}
 	return schedule.Next(lastTriggered.Time), nil
-}
-
-func updateMirrorStatus(ctx context.Context, c client.Client, mirror *mirrorv1alpha1.GitMirror) error {
-	if err := c.Status().Update(ctx, mirror); err != nil {
-		return c.Update(ctx, mirror)
-	}
-	return nil
 }

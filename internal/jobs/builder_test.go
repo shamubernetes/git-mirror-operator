@@ -5,6 +5,7 @@ import (
 
 	mirrorv1alpha1 "github.com/shamubernetes/git-mirror-operator/api/v1alpha1"
 	"github.com/shamubernetes/git-mirror-operator/internal/jobs"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -65,6 +66,37 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	}
 	if len(syncJob.Job.Spec.Template.Spec.Volumes) < 2 {
 		t.Fatalf("expected secret volumes, got %d", len(syncJob.Job.Spec.Template.Spec.Volumes))
+	}
+	securityContext := syncJob.Job.Spec.Template.Spec.SecurityContext
+	if securityContext == nil || securityContext.SeccompProfile == nil ||
+		securityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("expected pod seccomp profile RuntimeDefault, got %#v", securityContext)
+	}
+}
+
+func TestBuildSyncJobUsesStableNameForDelivery(t *testing.T) {
+	mirror := baseMirror()
+
+	first, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev", TriggerID: "delivery-1"})
+	if err != nil {
+		t.Fatalf("expected first job: %v", err)
+	}
+	second, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev", TriggerID: "delivery-1"})
+	if err != nil {
+		t.Fatalf("expected second job: %v", err)
+	}
+
+	if first.Job.Name == "" {
+		t.Fatal("expected stable job name")
+	}
+	if first.Job.GenerateName != "" {
+		t.Fatalf("expected no generateName for stable delivery, got %q", first.Job.GenerateName)
+	}
+	if first.Job.Name != second.Job.Name {
+		t.Fatalf("expected same delivery to produce same job name, got %q and %q", first.Job.Name, second.Job.Name)
+	}
+	if len(first.Job.Name) > 63 {
+		t.Fatalf("job name exceeds DNS label limit: %q", first.Job.Name)
 	}
 }
 

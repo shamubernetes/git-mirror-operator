@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ const (
 	AppName             = "git-mirror-operator"
 	LabelName           = "app.kubernetes.io/name"
 	LabelGitMirror      = "mirror.maude.dev/gitmirror"
+	LabelDeliveryID     = "mirror.maude.dev/delivery-id"
 	LabelSourceOwner    = "mirror.maude.dev/source-owner"
 	LabelSourceRepo     = "mirror.maude.dev/source-repo"
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
@@ -26,6 +29,7 @@ const (
 type Options struct {
 	DefaultImage string
 	Scheme       *runtime.Scheme
+	TriggerID    string
 }
 
 type SyncJob struct {
@@ -72,6 +76,9 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 		}
 	}
 	labels := LabelsForMirror(mirror)
+	if opts.TriggerID != "" {
+		labels[LabelDeliveryID] = SanitizeLabelValue(opts.TriggerID)
+	}
 	knownHostsName := mirror.Spec.Job.KnownHostsConfigMapName
 	if knownHostsName == "" {
 		knownHostsName = DefaultKnownHostsCM
@@ -90,9 +97,8 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	runAsUser := int64(65532)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: dnsLabel("gitmirror-" + mirror.Name + "-"),
-			Namespace:    mirror.Namespace,
-			Labels:       labels,
+			Namespace: mirror.Namespace,
+			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
@@ -105,6 +111,9 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: &runAsNonRoot,
 						RunAsUser:    &runAsUser,
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
 					},
 					Containers: []corev1.Container{{
 						Name:            "sync",
@@ -155,6 +164,11 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 			},
 		},
 	}
+	if opts.TriggerID != "" {
+		job.Name = NameForMirrorTrigger(mirror, opts.TriggerID)
+	} else {
+		job.GenerateName = dnsLabel("gitmirror-" + mirror.Name + "-")
+	}
 	if mirror.Spec.Job.ActiveDeadlineSeconds != nil {
 		job.Spec.ActiveDeadlineSeconds = mirror.Spec.Job.ActiveDeadlineSeconds
 	}
@@ -164,6 +178,20 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 		}
 	}
 	return &SyncJob{Job: job}, nil
+}
+
+func NameForMirrorTrigger(mirror *mirrorv1alpha1.GitMirror, triggerID string) string {
+	sum := sha256.Sum256([]byte(mirror.Namespace + "/" + mirror.Name + "/" + triggerID))
+	hash := hex.EncodeToString(sum[:])[:12]
+	base := dnsLabel("gitmirror-" + mirror.Name)
+	maxBase := 63 - len(hash) - 1
+	if len(base) > maxBase {
+		base = strings.TrimRight(base[:maxBase], "-")
+	}
+	if base == "" {
+		base = "gitmirror"
+	}
+	return base + "-" + hash
 }
 
 func LabelsForMirror(mirror *mirrorv1alpha1.GitMirror) map[string]string {
@@ -198,6 +226,14 @@ func dnsLabel(s string) string {
 		}
 	}
 	return strings.TrimLeft(b.String(), "-")
+}
+
+func SanitizeLabelValue(s string) string {
+	s = dnsLabel(s)
+	if len(s) > 63 {
+		s = s[:63]
+	}
+	return strings.Trim(s, "-")
 }
 
 func int32Ptr(v int32) *int32 { return &v }

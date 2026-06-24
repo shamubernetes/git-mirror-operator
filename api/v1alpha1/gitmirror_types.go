@@ -1,56 +1,70 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
-type GitMirror struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   GitMirrorSpec   `json:"spec,omitempty"`
-	Status GitMirrorStatus `json:"status,omitempty"`
-}
-
-type GitMirrorList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-
-	Items []GitMirror `json:"items"`
-}
-
+// GitMirrorSpec defines the desired state of GitMirror.
 type GitMirrorSpec struct {
-	Provider string          `json:"provider,omitempty"`
-	GitHub   GitHubSpec      `json:"github,omitempty"`
-	Source   GitEndpointSpec `json:"source,omitempty"`
-	Target   GitEndpointSpec `json:"target,omitempty"`
-	Mirror   MirrorSpec      `json:"mirror,omitempty"`
+	// +kubebuilder:validation:Enum=github
+	Provider string `json:"provider"`
+
+	GitHub   GitHubSpec      `json:"github"`
+	Source   GitEndpointSpec `json:"source"`
+	Target   GitEndpointSpec `json:"target"`
+	Mirror   MirrorSpec      `json:"mirror"`
 	Fallback FallbackSpec    `json:"fallback,omitempty"`
 	Job      JobSpec         `json:"job,omitempty"`
 }
 
 type GitHubSpec struct {
-	Owner            string       `json:"owner,omitempty"`
-	Repo             string       `json:"repo,omitempty"`
-	WebhookSecretRef SecretKeyRef `json:"webhookSecretRef,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Owner string `json:"owner"`
+	// +kubebuilder:validation:MinLength=1
+	Repo string `json:"repo"`
+
+	WebhookSecretRef SecretKeyRef `json:"webhookSecretRef"`
 }
 
 type GitEndpointSpec struct {
-	URL          string       `json:"url,omitempty"`
-	SSHSecretRef SecretKeyRef `json:"sshSecretRef,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+
+	SSHSecretRef SecretKeyRef `json:"sshSecretRef"`
 }
 
 type SecretKeyRef struct {
-	Name string `json:"name,omitempty"`
-	Key  string `json:"key,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
 }
 
 type MirrorSpec struct {
-	Mode        string `json:"mode,omitempty"`
-	IncludeTags bool   `json:"includeTags,omitempty"`
-	Prune       bool   `json:"prune,omitempty"`
+	// +kubebuilder:validation:Enum=exact;additive
+	// +kubebuilder:default=exact
+	Mode string `json:"mode,omitempty"`
+	// +kubebuilder:default=true
+	IncludeTags bool `json:"includeTags,omitempty"`
+	// +kubebuilder:default=true
+	Prune bool `json:"prune,omitempty"`
 }
 
 type FallbackSpec struct {
@@ -68,98 +82,49 @@ type JobSpec struct {
 	ServiceAccountName      string                      `json:"serviceAccountName,omitempty"`
 }
 
+// GitMirrorStatus defines the observed state of GitMirror.
 type GitMirrorStatus struct {
-	ObservedGeneration   int64              `json:"observedGeneration,omitempty"`
-	LastWebhookAt        *metav1.Time       `json:"lastWebhookAt,omitempty"`
-	LastDeliveryID       string             `json:"lastDeliveryID,omitempty"`
-	LastTriggeredAt      *metav1.Time       `json:"lastTriggeredAt,omitempty"`
-	LastJobName          string             `json:"lastJobName,omitempty"`
-	LastSuccessAt        *metav1.Time       `json:"lastSuccessAt,omitempty"`
-	LastFailureAt        *metav1.Time       `json:"lastFailureAt,omitempty"`
-	LastError            string             `json:"lastError,omitempty"`
-	LastMirroredRevision string             `json:"lastMirroredRevision,omitempty"`
-	PendingResync        bool               `json:"pendingResync,omitempty"`
-	Conditions           []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration   int64        `json:"observedGeneration,omitempty"`
+	LastWebhookAt        *metav1.Time `json:"lastWebhookAt,omitempty"`
+	LastDeliveryID       string       `json:"lastDeliveryID,omitempty"`
+	LastTriggeredAt      *metav1.Time `json:"lastTriggeredAt,omitempty"`
+	LastJobName          string       `json:"lastJobName,omitempty"`
+	LastSuccessAt        *metav1.Time `json:"lastSuccessAt,omitempty"`
+	LastFailureAt        *metav1.Time `json:"lastFailureAt,omitempty"`
+	LastError            string       `json:"lastError,omitempty"`
+	LastMirroredRevision string       `json:"lastMirroredRevision,omitempty"`
+	PendingResync        bool         `json:"pendingResync,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
-func (in *GitMirror) DeepCopyObject() runtime.Object {
-	if in == nil {
-		return nil
-	}
-	out := new(GitMirror)
-	*out = *in
-	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
-	out.Status = *in.Status.DeepCopy()
-	return out
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Repo",type=string,JSONPath=`.spec.github.repo`
+// +kubebuilder:printcolumn:name="Last Success",type=date,JSONPath=`.status.lastSuccessAt`
+// +kubebuilder:printcolumn:name="Pending",type=boolean,JSONPath=`.status.pendingResync`
+
+// GitMirror is the Schema for the gitmirrors API.
+type GitMirror struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   GitMirrorSpec   `json:"spec,omitempty"`
+	Status GitMirrorStatus `json:"status,omitempty"`
 }
 
-func (in *GitMirrorList) DeepCopyObject() runtime.Object {
-	if in == nil {
-		return nil
-	}
-	out := new(GitMirrorList)
-	*out = *in
-	out.ListMeta = in.ListMeta
-	if in.Items != nil {
-		out.Items = make([]GitMirror, len(in.Items))
-		for i := range in.Items {
-			out.Items[i] = *in.Items[i].DeepCopy()
-		}
-	}
-	return out
+// +kubebuilder:object:root=true
+
+// GitMirrorList contains a list of GitMirror.
+type GitMirrorList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []GitMirror `json:"items"`
 }
 
-func (in *GitMirror) DeepCopy() *GitMirror {
-	if in == nil {
-		return nil
-	}
-	return in.DeepCopyObject().(*GitMirror)
-}
-
-func (in *GitMirrorSpec) DeepCopy() *GitMirrorSpec {
-	if in == nil {
-		return nil
-	}
-	out := new(GitMirrorSpec)
-	*out = *in
-	out.Job.Resources = *in.Job.Resources.DeepCopy()
-	if in.Job.BackoffLimit != nil {
-		out.Job.BackoffLimit = new(int32)
-		*out.Job.BackoffLimit = *in.Job.BackoffLimit
-	}
-	if in.Job.ActiveDeadlineSeconds != nil {
-		out.Job.ActiveDeadlineSeconds = new(int64)
-		*out.Job.ActiveDeadlineSeconds = *in.Job.ActiveDeadlineSeconds
-	}
-	if in.Job.TTLSecondsAfterFinished != nil {
-		out.Job.TTLSecondsAfterFinished = new(int32)
-		*out.Job.TTLSecondsAfterFinished = *in.Job.TTLSecondsAfterFinished
-	}
-	return out
-}
-
-func (in *GitMirrorStatus) DeepCopy() *GitMirrorStatus {
-	if in == nil {
-		return nil
-	}
-	out := new(GitMirrorStatus)
-	*out = *in
-	if in.LastWebhookAt != nil {
-		out.LastWebhookAt = in.LastWebhookAt.DeepCopy()
-	}
-	if in.LastTriggeredAt != nil {
-		out.LastTriggeredAt = in.LastTriggeredAt.DeepCopy()
-	}
-	if in.LastSuccessAt != nil {
-		out.LastSuccessAt = in.LastSuccessAt.DeepCopy()
-	}
-	if in.LastFailureAt != nil {
-		out.LastFailureAt = in.LastFailureAt.DeepCopy()
-	}
-	if in.Conditions != nil {
-		out.Conditions = make([]metav1.Condition, len(in.Conditions))
-		copy(out.Conditions, in.Conditions)
-	}
-	return out
+func init() {
+	SchemeBuilder.Register(&GitMirror{}, &GitMirrorList{})
 }
