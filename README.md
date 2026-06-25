@@ -93,6 +93,8 @@ GitHub Actions builds both runtime images on pull requests and publishes multi-a
 
 Published tags include the branch name, `sha-<commit>`, `latest` for the default branch, and semantic version tags for releases like `v0.1.0`.
 
+The default kustomize install points the manager at `ghcr.io/shamubernetes/git-mirror-operator:latest` and configures Jobs to use `ghcr.io/shamubernetes/git-mirror-sync:latest`. Pin those image tags or digests in your GitOps overlay for production.
+
 ## Development
 
 Run the SDK test path, including generated manifests and envtest:
