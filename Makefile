@@ -203,13 +203,17 @@ docker-push: ## Push docker image with the manager.
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name git-mirror-operator-builder
 	$(CONTAINER_TOOL) buildx use git-mirror-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile .
 	- $(CONTAINER_TOOL) buildx rm git-mirror-operator-builder
-	rm Dockerfile.cross
+
+.PHONY: docker-buildx-sync
+docker-buildx-sync: ## Build and push docker image for the sync runner for cross-platform support
+	- $(CONTAINER_TOOL) buildx create --name git-mirror-sync-builder
+	$(CONTAINER_TOOL) buildx use git-mirror-sync-builder
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${SYNC_IMG} -f Dockerfile.sync .
+	- $(CONTAINER_TOOL) buildx rm git-mirror-sync-builder
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

@@ -84,6 +84,15 @@ git clone --mirror "$SOURCE_URL" /tmp/repo.git
 git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 ```
 
+## Images
+
+GitHub Actions builds both runtime images on pull requests and publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR on pushes to `main` and semantic version tags:
+
+- `ghcr.io/shamubernetes/git-mirror-operator`
+- `ghcr.io/shamubernetes/git-mirror-sync`
+
+Published tags include the branch name, `sha-<commit>`, `latest` for the default branch, and semantic version tags for releases like `v0.1.0`.
+
 ## Development
 
 Run the SDK test path, including generated manifests and envtest:
