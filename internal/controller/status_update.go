@@ -9,15 +9,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func UpdateGitMirrorStatus(ctx context.Context, c client.Client, desired *mirrorv1alpha1.GitMirror) error {
-	key := types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}
+func PatchGitMirrorStatus(ctx context.Context, c client.Client, key types.NamespacedName, mutate func(*mirrorv1alpha1.GitMirror)) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current mirrorv1alpha1.GitMirror
 		if err := c.Get(ctx, key, &current); err != nil {
 			return err
 		}
 		base := current.DeepCopy()
-		current.Status = *desired.Status.DeepCopy()
+		mutate(&current)
 		if err := c.Status().Patch(ctx, &current, client.MergeFrom(base)); err != nil {
 			return c.Patch(ctx, &current, client.MergeFrom(base))
 		}

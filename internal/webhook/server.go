@@ -109,8 +109,10 @@ func (s *Server) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 	now := metav1.NewTime(s.now())
 	revision := gh.ExtractAfterRevision(body)
-	controller.ApplyWebhookIntent(mirror, deliveryID, revision, now)
-	if err := controller.UpdateGitMirrorStatus(r.Context(), s.client, mirror); err != nil {
+	key := types.NamespacedName{Namespace: mirror.Namespace, Name: mirror.Name}
+	if err := controller.PatchGitMirrorStatus(r.Context(), s.client, key, func(current *mirrorv1alpha1.GitMirror) {
+		controller.ApplyWebhookIntent(current, deliveryID, revision, now)
+	}); err != nil {
 		http.Error(w, "update status", http.StatusInternalServerError)
 		return
 	}
