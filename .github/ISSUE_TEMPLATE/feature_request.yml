@@ -1,0 +1,29 @@
+name: Feature Request
+description: Propose an improvement to the operator, sync runner, or manifests.
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or limitation should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other approaches considered.
+  - type: textarea
+    id: gitops
+    attributes:
+      label: GitOps Impact
+      description: Any expected changes to CRDs, RBAC, Secrets, ConfigMaps, image tags, or manifests.

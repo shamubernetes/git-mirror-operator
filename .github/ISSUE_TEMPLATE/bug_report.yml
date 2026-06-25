@@ -1,0 +1,58 @@
+name: Bug Report
+description: Report a reproducible problem with the operator or sync runner.
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the private process in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag, Git commit, or release version.
+      placeholder: v0.1.0 or sha-...
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction Steps
+      description: Include relevant GitMirror manifests with secrets redacted.
+      placeholder: |
+        1. Apply ...
+        2. Send webhook ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and Events
+      description: Paste relevant controller logs, Job logs, and Kubernetes events. Redact secrets.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes distribution/version, architecture, install method, and registry/image details.
+      placeholder: |
+        Kubernetes:
+        Architecture:
+        Install path:
+        Operator image:
+        Sync image:

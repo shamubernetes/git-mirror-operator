@@ -130,3 +130,11 @@ GITHUB_WEBHOOK_SECRET=replace-me ./scripts/send-signed-webhook.sh http://localho
 ```
 
 The generated SDK e2e suite under `test/e2e` requires `kind`; it is intentionally excluded from `make test`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks and pull request expectations.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
