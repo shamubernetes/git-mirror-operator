@@ -33,7 +33,7 @@ Commit generated CRDs, RBAC, and deepcopy files with the source change that requ
 
 ## Images
 
-Runtime images are built by GitHub Actions on pull requests and published to GHCR from `main` and version tags. Local image builds are available with:
+Runtime images are published to GHCR by the `Release Images` workflow from semantic version tags after lint, unit/envtest, and e2e checks pass. Local image builds are available with:
 
 ```bash
 make docker-build IMG=ghcr.io/shamubernetes/git-mirror-operator:dev

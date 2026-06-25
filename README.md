@@ -86,12 +86,12 @@ git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 
 ## Images
 
-GitHub Actions builds both runtime images on pull requests and publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR on pushes to `main` and semantic version tags:
+The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR from semantic version tags after lint, unit/envtest, and e2e checks pass:
 
 - `ghcr.io/shamubernetes/git-mirror-operator`
 - `ghcr.io/shamubernetes/git-mirror-sync`
 
-Published tags include the branch name, `sha-<commit>`, `latest` for the default branch, and semantic version tags for releases like `v0.1.0`.
+Published tags include the release tag, semver aliases like `0.1` for `v0.1.0`, `sha-<commit>`, and `latest`.
 
 The default kustomize install points the manager at `ghcr.io/shamubernetes/git-mirror-operator:latest` and configures Jobs to use `ghcr.io/shamubernetes/git-mirror-sync:latest`. Pin those image tags or digests in your GitOps overlay for production.
 
