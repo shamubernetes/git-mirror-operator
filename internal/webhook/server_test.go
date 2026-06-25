@@ -36,7 +36,14 @@ func testServer(t *testing.T, objects ...runtime.Object) *webhook.Server {
 	if err := mirrorv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	return webhook.NewServer(fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build(), "example/git-mirror-sync:dev")
+	return webhook.NewServer(
+		fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mirrorv1alpha1.GitMirror{}).
+			WithRuntimeObjects(objects...).
+			Build(),
+		"example/git-mirror-sync:dev",
+	)
 }
 
 func testScheme(t *testing.T) *runtime.Scheme {
@@ -149,7 +156,11 @@ func TestPushEventRecordsIntentForKnownRepository(t *testing.T) {
 func TestPushEventReadsWebhookSecretFromConfiguredReader(t *testing.T) {
 	body := []byte(`{"repository":{"full_name":"example/source-repo"},"after":"abc123"}`)
 	scheme := testScheme(t)
-	mainClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(testMirror()).Build()
+	mainClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&mirrorv1alpha1.GitMirror{}).
+		WithRuntimeObjects(testMirror()).
+		Build()
 	secretReader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(testSecret()).Build()
 	server := webhook.NewServerWithReaders(mainClient, secretReader, "example/git-mirror-sync:dev", scheme)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))

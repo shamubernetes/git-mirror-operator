@@ -17,9 +17,6 @@ func PatchGitMirrorStatus(ctx context.Context, c client.Client, key types.Namesp
 		}
 		base := current.DeepCopy()
 		mutate(&current)
-		if err := c.Status().Patch(ctx, &current, client.MergeFrom(base)); err != nil {
-			return c.Patch(ctx, &current, client.MergeFrom(base))
-		}
-		return nil
+		return c.Status().Patch(ctx, &current, client.MergeFrom(base))
 	})
 }
