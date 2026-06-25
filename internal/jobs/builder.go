@@ -210,7 +210,7 @@ func LabelsForMirror(mirror *mirrorv1alpha1.GitMirror) map[string]string {
 }
 
 func secretVolume(name string, ref mirrorv1alpha1.SecretKeyRef) corev1.Volume {
-	mode := int32(0400)
+	mode := int32(0444)
 	return corev1.Volume{
 		Name: name,
 		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{

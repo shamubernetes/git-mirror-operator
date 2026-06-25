@@ -61,6 +61,8 @@ The default install creates the `git-mirror-sync` ServiceAccount used by sync Jo
 
 ## Sync Runner
 
+Sync Jobs run as non-root. SSH key Secrets are mounted read-only and readable by that UID; before invoking git, the runner copies each key into a private `/tmp/git-mirror-ssh` directory, chmods the copy to `0400`, and points `GIT_SSH_COMMAND` at the copied key.
+
 Exact mode mirrors all refs and prunes target refs that no longer exist at the source:
 
 ```bash

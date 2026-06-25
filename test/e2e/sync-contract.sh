@@ -19,6 +19,14 @@ require_path() {
 	fi
 }
 
+require_readable() {
+	path="$1"
+	if [ ! -r "$path" ]; then
+		echo "expected readable file at $path" >&2
+		exit 1
+	fi
+}
+
 require_dir() {
 	path="$1"
 	if [ ! -d "$path" ]; then
@@ -39,6 +47,8 @@ require_env HOME "/tmp"
 require_path "$SOURCE_SSH_KEY_PATH"
 require_path "$TARGET_SSH_KEY_PATH"
 require_path "$KNOWN_HOSTS_PATH"
+require_readable "$SOURCE_SSH_KEY_PATH"
+require_readable "$TARGET_SSH_KEY_PATH"
 require_dir "$HOME"
 
 echo "sync contract ok"

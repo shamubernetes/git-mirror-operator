@@ -6,9 +6,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+const preparedSSHDir = "/tmp/git-mirror-ssh"
 
 type Config struct {
 	SourceURL        string
@@ -40,6 +43,11 @@ func ConfigFromEnv() Config {
 }
 
 func Run(cfg Config) error {
+	preparedCfg, err := prepareSSHKeys(cfg, preparedSSHDir)
+	if err != nil {
+		return err
+	}
+	cfg = preparedCfg
 	commands, err := BuildGitCommands(cfg)
 	if err != nil {
 		return err
@@ -84,6 +92,45 @@ func BuildGitCommands(cfg Config) ([][]string, error) {
 		return nil, fmt.Errorf("unsupported MIRROR_MODE %q", mode)
 	}
 	return commands, nil
+}
+
+func prepareSSHKeys(cfg Config, dir string) (Config, error) {
+	var err error
+	if cfg.SourceSSHKeyPath != "" {
+		cfg.SourceSSHKeyPath, err = copySSHKey(cfg.SourceSSHKeyPath, filepath.Join(dir, "source_key"))
+		if err != nil {
+			return cfg, fmt.Errorf("prepare source SSH key: %w", err)
+		}
+	}
+	if cfg.TargetSSHKeyPath != "" {
+		cfg.TargetSSHKeyPath, err = copySSHKey(cfg.TargetSSHKeyPath, filepath.Join(dir, "target_key"))
+		if err != nil {
+			return cfg, fmt.Errorf("prepare target SSH key: %w", err)
+		}
+	}
+	return cfg, nil
+}
+
+func copySSHKey(src, dst string) (string, error) {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return "", err
+	}
+	tmp := dst + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tmp, 0400); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
 func gitSSHCommand(cfg Config, keyPath string) string {

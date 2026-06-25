@@ -79,11 +79,33 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	if len(syncJob.Job.Spec.Template.Spec.Volumes) < 2 {
 		t.Fatalf("expected secret volumes, got %d", len(syncJob.Job.Spec.Template.Spec.Volumes))
 	}
+	assertSecretVolumeMode(t, syncJob, "source-ssh-key", 0444)
+	assertSecretVolumeMode(t, syncJob, "target-ssh-key", 0444)
 	securityContext := syncJob.Job.Spec.Template.Spec.SecurityContext
 	if securityContext == nil || securityContext.SeccompProfile == nil ||
 		securityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("expected pod seccomp profile RuntimeDefault, got %#v", securityContext)
 	}
+}
+
+func assertSecretVolumeMode(t *testing.T, job *jobs.SyncJob, name string, want int32) {
+	t.Helper()
+	for _, volume := range job.Job.Spec.Template.Spec.Volumes {
+		if volume.Name != name {
+			continue
+		}
+		if volume.Secret == nil {
+			t.Fatalf("expected %s to be a Secret volume", name)
+		}
+		if volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != want {
+			t.Fatalf("expected %s default mode %04o, got %#v", name, want, volume.Secret.DefaultMode)
+		}
+		if len(volume.Secret.Items) != 1 || volume.Secret.Items[0].Mode == nil || *volume.Secret.Items[0].Mode != want {
+			t.Fatalf("expected %s item mode %04o, got %#v", name, want, volume.Secret.Items)
+		}
+		return
+	}
+	t.Fatalf("missing volume %s", name)
 }
 
 func TestBuildSyncJobUsesStableNameForDelivery(t *testing.T) {
