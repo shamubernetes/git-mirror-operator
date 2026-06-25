@@ -136,6 +136,47 @@ func TestBuildSyncJobSanitizesLongLabelValues(t *testing.T) {
 	}
 }
 
+func TestLabelsForMirrorPreservesDistinctValidLabelValues(t *testing.T) {
+	withDot := baseMirror()
+	withDot.Name = "source.repo"
+	withHyphen := baseMirror()
+	withHyphen.Name = "source-repo"
+
+	dotLabel := jobs.LabelsForMirror(withDot)[jobs.LabelGitMirror]
+	hyphenLabel := jobs.LabelsForMirror(withHyphen)[jobs.LabelGitMirror]
+
+	assertValidLabelValue(t, jobs.LabelGitMirror, dotLabel)
+	assertValidLabelValue(t, jobs.LabelGitMirror, hyphenLabel)
+	if dotLabel != "source.repo" {
+		t.Fatalf("expected valid label value to be preserved, got %q", dotLabel)
+	}
+	if hyphenLabel != "source-repo" {
+		t.Fatalf("expected valid label value to be preserved, got %q", hyphenLabel)
+	}
+	if dotLabel == hyphenLabel {
+		t.Fatalf("expected distinct mirror names to produce distinct labels, got %q", dotLabel)
+	}
+}
+
+func TestLabelsForMirrorHashSuffixesLongLabelValues(t *testing.T) {
+	first := baseMirror()
+	first.Name = strings.Repeat("a", 63) + "x"
+	second := baseMirror()
+	second.Name = strings.Repeat("a", 63) + "y"
+
+	firstLabel := jobs.LabelsForMirror(first)[jobs.LabelGitMirror]
+	secondLabel := jobs.LabelsForMirror(second)[jobs.LabelGitMirror]
+
+	assertValidLabelValue(t, jobs.LabelGitMirror, firstLabel)
+	assertValidLabelValue(t, jobs.LabelGitMirror, secondLabel)
+	if firstLabel == secondLabel {
+		t.Fatalf("expected long mirror names with shared prefixes to produce distinct labels, got %q", firstLabel)
+	}
+	if len(firstLabel) > 63 || len(secondLabel) > 63 {
+		t.Fatalf("expected labels <= 63 chars, got %d and %d", len(firstLabel), len(secondLabel))
+	}
+}
+
 func TestBuildSyncJobForBasicAuth(t *testing.T) {
 	mirror := baseMirror()
 	mirror.Spec.Source.URL = "https://github.com/example/source-repo.git"

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	mirrorv1alpha1 "github.com/shamubernetes/git-mirror-operator/api/v1alpha1"
+	"github.com/shamubernetes/git-mirror-operator/internal/syncenv"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,12 +29,6 @@ const (
 	AnnotationOwner     = "mirror.maude.dev/full-source-owner"
 	AnnotationRepo      = "mirror.maude.dev/full-source-repo"
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
-)
-
-const (
-	authTypeSSH       = "ssh"
-	authTypeBasic     = "basic"
-	authTypeGitHubApp = "githubApp"
 )
 
 type Options struct {
@@ -91,21 +86,21 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 		labels[LabelDeliveryID] = SanitizeLabelValue(opts.TriggerID)
 	}
 	env := []corev1.EnvVar{
-		{Name: "SOURCE_URL", Value: mirror.Spec.Source.URL},
-		{Name: "TARGET_URL", Value: mirror.Spec.Target.URL},
-		{Name: "MIRROR_MODE", Value: mode},
+		{Name: syncenv.SourceURL, Value: mirror.Spec.Source.URL},
+		{Name: syncenv.TargetURL, Value: mirror.Spec.Target.URL},
+		{Name: syncenv.MirrorMode, Value: mode},
 	}
 	if mode == "additive" {
-		env = append(env, corev1.EnvVar{Name: "INCLUDE_TAGS", Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)})
+		env = append(env, corev1.EnvVar{Name: syncenv.IncludeTags, Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)})
 	}
-	env = append(env, corev1.EnvVar{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"}, corev1.EnvVar{Name: "HOME", Value: "/tmp"})
+	env = append(env, corev1.EnvVar{Name: syncenv.KnownHostsPath, Value: "/var/run/git-mirror/known-hosts/known_hosts"}, corev1.EnvVar{Name: syncenv.Home, Value: "/tmp"})
 	authMounts := []corev1.VolumeMount{}
 	authVolumes := []corev1.Volume{}
-	sourceEnv, sourceMounts, sourceVolumes, err := endpointAuth("SOURCE", "source", mirror.Spec.Source)
+	sourceEnv, sourceMounts, sourceVolumes, err := endpointAuth(syncenv.SourcePrefix, "source", mirror.Spec.Source)
 	if err != nil {
 		return nil, err
 	}
-	targetEnv, targetMounts, targetVolumes, err := endpointAuth("TARGET", "target", mirror.Spec.Target)
+	targetEnv, targetMounts, targetVolumes, err := endpointAuth(syncenv.TargetPrefix, "target", mirror.Spec.Target)
 	if err != nil {
 		return nil, err
 	}
@@ -216,44 +211,44 @@ func endpointAuth(envPrefix, pathPrefix string, endpoint mirrorv1alpha1.GitEndpo
 		authType = endpoint.Auth.Type
 	}
 	if authType == "" && endpoint.SSHSecretRef != nil {
-		authType = authTypeSSH
+		authType = syncenv.AuthTypeSSH
 	}
-	env := []corev1.EnvVar{{Name: envPrefix + "_AUTH_TYPE", Value: authType}}
+	env := []corev1.EnvVar{{Name: syncenv.Endpoint(envPrefix, syncenv.SuffixAuthType), Value: authType}}
 	switch authType {
-	case authTypeSSH:
+	case syncenv.AuthTypeSSH:
 		ref, err := sshAuthRef(endpoint)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		volumeName := pathPrefix + "-ssh-key"
 		mountPath := "/var/run/git-mirror/" + pathPrefix + "/ssh_key"
-		env = append(env, corev1.EnvVar{Name: envPrefix + "_SSH_KEY_PATH", Value: mountPath})
+		env = append(env, corev1.EnvVar{Name: syncenv.Endpoint(envPrefix, syncenv.SuffixSSHKeyPath), Value: mountPath})
 		return env,
 			[]corev1.VolumeMount{{Name: volumeName, MountPath: mountPath, SubPath: ref.Key, ReadOnly: true}},
 			[]corev1.Volume{secretVolume(volumeName, *ref)},
 			nil
-	case authTypeBasic:
+	case syncenv.AuthTypeBasic:
 		if endpoint.Auth == nil || endpoint.Auth.Basic == nil {
 			return nil, nil, nil, fmt.Errorf("%s auth.type=basic requires auth.basic", strings.ToLower(envPrefix))
 		}
 		env = append(env,
-			secretEnvVar(envPrefix+"_AUTH_USERNAME", endpoint.Auth.Basic.UsernameSecretRef),
-			secretEnvVar(envPrefix+"_AUTH_PASSWORD", endpoint.Auth.Basic.PasswordSecretRef),
+			secretEnvVar(syncenv.Endpoint(envPrefix, syncenv.SuffixAuthUsername), endpoint.Auth.Basic.UsernameSecretRef),
+			secretEnvVar(syncenv.Endpoint(envPrefix, syncenv.SuffixAuthPassword), endpoint.Auth.Basic.PasswordSecretRef),
 		)
 		return env, nil, nil, nil
-	case authTypeGitHubApp:
+	case syncenv.AuthTypeGitHubApp:
 		if endpoint.Auth == nil || endpoint.Auth.GitHubApp == nil {
 			return nil, nil, nil, fmt.Errorf("%s auth.type=githubApp requires auth.githubApp", strings.ToLower(envPrefix))
 		}
 		privateKeyPath := "/var/run/git-mirror/" + pathPrefix + "-github-app/private_key"
 		volumeName := pathPrefix + "-github-app-private-key"
 		env = append(env,
-			secretEnvVar(envPrefix+"_GITHUB_APP_ID", endpoint.Auth.GitHubApp.AppIDSecretRef),
-			secretEnvVar(envPrefix+"_GITHUB_APP_INSTALLATION_ID", endpoint.Auth.GitHubApp.InstallationIDSecretRef),
-			corev1.EnvVar{Name: envPrefix + "_GITHUB_APP_PRIVATE_KEY_PATH", Value: privateKeyPath},
+			secretEnvVar(syncenv.Endpoint(envPrefix, syncenv.SuffixGitHubAppID), endpoint.Auth.GitHubApp.AppIDSecretRef),
+			secretEnvVar(syncenv.Endpoint(envPrefix, syncenv.SuffixGitHubAppInstallationID), endpoint.Auth.GitHubApp.InstallationIDSecretRef),
+			corev1.EnvVar{Name: syncenv.Endpoint(envPrefix, syncenv.SuffixGitHubAppPrivateKeyPath), Value: privateKeyPath},
 		)
 		if endpoint.Auth.GitHubApp.APIURL != "" {
-			env = append(env, corev1.EnvVar{Name: envPrefix + "_GITHUB_APP_API_URL", Value: endpoint.Auth.GitHubApp.APIURL})
+			env = append(env, corev1.EnvVar{Name: syncenv.Endpoint(envPrefix, syncenv.SuffixGitHubAppAPIURL), Value: endpoint.Auth.GitHubApp.APIURL})
 		}
 		return env,
 			[]corev1.VolumeMount{{Name: volumeName, MountPath: privateKeyPath, SubPath: endpoint.Auth.GitHubApp.PrivateKeySecretRef.Key, ReadOnly: true}},
@@ -343,21 +338,61 @@ func dnsLabel(s string) string {
 }
 
 func SanitizeLabelValue(s string) string {
-	clean := strings.Trim(dnsLabel(s), "-")
-	if clean == "" {
-		clean = "value"
+	if s != "" && isValidLabelValue(s) && len(s) <= 63 {
+		return s
 	}
-	if len(clean) <= 63 {
-		return clean
-	}
+
+	clean := labelValueBase(s)
 	sum := sha256.Sum256([]byte(s))
 	hash := hex.EncodeToString(sum[:])[:12]
 	maxBase := 63 - len(hash) - 1
-	clean = strings.Trim(clean[:maxBase], "-")
+	if len(clean) > maxBase {
+		clean = clean[:maxBase]
+	}
+	clean = strings.TrimRightFunc(clean, func(r rune) bool { return !isLabelValueAlnum(r) })
 	if clean == "" {
 		clean = "value"
 	}
 	return clean + "-" + hash
+}
+
+func labelValueBase(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if isLabelValueChar(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	clean := strings.TrimFunc(b.String(), func(r rune) bool { return !isLabelValueAlnum(r) })
+	if clean == "" {
+		return "value"
+	}
+	return clean
+}
+
+func isValidLabelValue(s string) bool {
+	if len(s) > 63 {
+		return false
+	}
+	if !isLabelValueAlnum(rune(s[0])) || !isLabelValueAlnum(rune(s[len(s)-1])) {
+		return false
+	}
+	for _, r := range s {
+		if !isLabelValueChar(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLabelValueChar(r rune) bool {
+	return isLabelValueAlnum(r) || r == '-' || r == '_' || r == '.'
+}
+
+func isLabelValueAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 func int32Ptr(v int32) *int32 { return &v }

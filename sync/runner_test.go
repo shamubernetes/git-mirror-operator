@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shamubernetes/git-mirror-operator/internal/syncenv"
 )
 
 func TestBuildGitCommandsForExactMode(t *testing.T) {
@@ -58,8 +61,8 @@ func TestPrepareSSHKeysCopiesMountedSecretsToPrivateFiles(t *testing.T) {
 	}
 
 	cfg, err := prepareCredentials(Config{
-		SourceAuth: EndpointAuth{Type: authTypeSSH, SSHKeyPath: sourceMount},
-		TargetAuth: EndpointAuth{Type: authTypeSSH, SSHKeyPath: targetMount},
+		SourceAuth: EndpointAuth{Type: syncenv.AuthTypeSSH, SSHKeyPath: sourceMount},
+		TargetAuth: EndpointAuth{Type: syncenv.AuthTypeSSH, SSHKeyPath: targetMount},
 	}, filepath.Join(dir, "prepared"))
 	if err != nil {
 		t.Fatalf("expected prepared keys: %v", err)
@@ -75,11 +78,29 @@ func TestPrepareSSHKeysCopiesMountedSecretsToPrivateFiles(t *testing.T) {
 	}
 }
 
+func TestValidateEndpointAuthRequiresHTTPSForTokenAuth(t *testing.T) {
+	for _, authType := range []string{syncenv.AuthTypeBasic, syncenv.AuthTypeGitHubApp} {
+		t.Run(authType, func(t *testing.T) {
+			auth := EndpointAuth{Type: authType, Username: "user", Password: "secret"}
+			if err := validateEndpointAuth("source", "http://github.com/example/repo.git", auth); err == nil {
+				t.Fatal("expected HTTP token-auth URL to be rejected")
+			}
+			if err := validateEndpointAuth("source", "https://github.com/example/repo.git", auth); err != nil {
+				t.Fatalf("expected HTTPS token-auth URL to be accepted: %v", err)
+			}
+		})
+	}
+
+	if err := validateEndpointAuth("source", "git@github.com:example/repo.git", EndpointAuth{Type: syncenv.AuthTypeSSH, SSHKeyPath: "/keys/id_rsa"}); err != nil {
+		t.Fatalf("expected SSH auth behavior to be preserved: %v", err)
+	}
+}
+
 func TestGitAuthEnvForBasicUsesAskPass(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
 
-	env, err := gitAuthEnv(Config{}, EndpointAuth{Type: authTypeBasic, Username: "user", Password: "secret"})
+	env, err := gitAuthEnv(Config{}, EndpointAuth{Type: syncenv.AuthTypeBasic, Username: "user", Password: "secret"})
 	if err != nil {
 		t.Fatalf("expected auth env: %v", err)
 	}
@@ -98,6 +119,9 @@ func TestGitAuthEnvForBasicUsesAskPass(t *testing.T) {
 	if envByName["GIT_MIRROR_USERNAME"] != "user" || envByName["GIT_MIRROR_PASSWORD"] != "secret" {
 		t.Fatalf("expected askpass credentials in env, got %#v", envByName)
 	}
+	if !strings.HasPrefix(envByName["GIT_ASKPASS"], dir+string(os.PathSeparator)) {
+		t.Fatalf("expected askpass path under test temp dir %q, got %q", dir, envByName["GIT_ASKPASS"])
+	}
 	if info, err := os.Stat(envByName["GIT_ASKPASS"]); err != nil {
 		t.Fatal(err)
 	} else if got := info.Mode().Perm(); got != 0500 {
@@ -106,15 +130,7 @@ func TestGitAuthEnvForBasicUsesAskPass(t *testing.T) {
 }
 
 func TestCreateGitHubAppInstallationToken(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateKeyPath := filepath.Join(t.TempDir(), "github-app.pem")
-	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-	if err := os.WriteFile(privateKeyPath, privateKeyPEM, 0400); err != nil {
-		t.Fatal(err)
-	}
+	privateKeyPath := writeTestGitHubAppPrivateKey(t)
 
 	var gotPath string
 	var gotAuth string
@@ -151,11 +167,71 @@ func TestCreateGitHubAppInstallationToken(t *testing.T) {
 	}
 }
 
+func TestCreateGitHubAppInstallationTokenSetsRequestDeadline(t *testing.T) {
+	privateKeyPath := writeTestGitHubAppPrivateKey(t)
+
+	sawRoundTrip := false
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sawRoundTrip = true
+		deadline, ok := req.Context().Deadline()
+		if !ok {
+			t.Error("expected GitHub App token request context to have a deadline")
+		} else if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Minute {
+			t.Errorf("expected bounded positive request deadline, got %s", remaining)
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Status:     "201 Created",
+			Body:       io.NopCloser(strings.NewReader(`{"token":"installation-token"}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}
+
+	token, err := createGitHubAppInstallationToken(EndpointAuth{
+		GitHubAppID:             "12345",
+		GitHubAppInstallationID: "67890",
+		GitHubAppPrivateKeyPath: privateKeyPath,
+		GitHubAppAPIURL:         "https://api.example.test",
+	}, client, func() time.Time {
+		return time.Unix(1700000000, 0)
+	})
+	if err != nil {
+		t.Fatalf("expected token: %v", err)
+	}
+	if token != "installation-token" {
+		t.Fatalf("expected installation token, got %q", token)
+	}
+	if !sawRoundTrip {
+		t.Fatal("expected HTTP client to receive request")
+	}
+}
+
 func TestSafeCommandRedactsURLCredentials(t *testing.T) {
 	got := safeCommand([]string{"git", "clone", "https://user:secret@example.com/repo.git"})
 	if strings.Contains(got, "secret") || strings.Contains(got, "user:") {
 		t.Fatalf("expected credentials redacted, got %q", got)
 	}
+}
+
+func writeTestGitHubAppPrivateKey(t *testing.T) string {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKeyPath := filepath.Join(t.TempDir(), "github-app.pem")
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if err := os.WriteFile(privateKeyPath, privateKeyPEM, 0400); err != nil {
+		t.Fatal(err)
+	}
+	return privateKeyPath
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func assertPreparedKey(t *testing.T, path, want string) {

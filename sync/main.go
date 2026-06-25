@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -21,16 +22,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shamubernetes/git-mirror-operator/internal/syncenv"
 )
 
-const preparedCredentialDir = "/tmp/git-mirror-credentials"
 const defaultGitHubAPIURL = "https://api.github.com"
+const githubAppTokenRequestTimeout = 30 * time.Second
+const preparedCredentialDirName = "git-mirror-credentials"
 
-const (
-	authTypeSSH       = "ssh"
-	authTypeBasic     = "basic"
-	authTypeGitHubApp = "githubApp"
-)
+var githubAppHTTPClient = &http.Client{Timeout: githubAppTokenRequestTimeout}
 
 type Config struct {
 	SourceURL      string
@@ -62,18 +62,18 @@ func main() {
 
 func ConfigFromEnv() Config {
 	return Config{
-		SourceURL:      os.Getenv("SOURCE_URL"),
-		TargetURL:      os.Getenv("TARGET_URL"),
-		MirrorMode:     envDefault("MIRROR_MODE", "exact"),
-		IncludeTags:    envBoolDefault("INCLUDE_TAGS", true),
-		SourceAuth:     endpointAuthFromEnv("SOURCE"),
-		TargetAuth:     endpointAuthFromEnv("TARGET"),
-		KnownHostsPath: os.Getenv("KNOWN_HOSTS_PATH"),
+		SourceURL:      os.Getenv(syncenv.SourceURL),
+		TargetURL:      os.Getenv(syncenv.TargetURL),
+		MirrorMode:     envDefault(syncenv.MirrorMode, "exact"),
+		IncludeTags:    envBoolDefault(syncenv.IncludeTags, true),
+		SourceAuth:     endpointAuthFromEnv(syncenv.SourcePrefix),
+		TargetAuth:     endpointAuthFromEnv(syncenv.TargetPrefix),
+		KnownHostsPath: os.Getenv(syncenv.KnownHostsPath),
 	}
 }
 
 func Run(cfg Config) error {
-	preparedCfg, err := prepareCredentials(cfg, preparedCredentialDir)
+	preparedCfg, err := prepareCredentials(cfg, preparedCredentialDir())
 	if err != nil {
 		return err
 	}
@@ -135,19 +135,19 @@ func BuildGitCommands(cfg Config) ([][]string, error) {
 }
 
 func endpointAuthFromEnv(prefix string) EndpointAuth {
-	authType := os.Getenv(prefix + "_AUTH_TYPE")
-	if authType == "" && os.Getenv(prefix+"_SSH_KEY_PATH") != "" {
-		authType = authTypeSSH
+	authType := os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixAuthType))
+	if authType == "" && os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixSSHKeyPath)) != "" {
+		authType = syncenv.AuthTypeSSH
 	}
 	return EndpointAuth{
 		Type:                    authType,
-		SSHKeyPath:              os.Getenv(prefix + "_SSH_KEY_PATH"),
-		Username:                os.Getenv(prefix + "_AUTH_USERNAME"),
-		Password:                os.Getenv(prefix + "_AUTH_PASSWORD"),
-		GitHubAppID:             os.Getenv(prefix + "_GITHUB_APP_ID"),
-		GitHubAppInstallationID: os.Getenv(prefix + "_GITHUB_APP_INSTALLATION_ID"),
-		GitHubAppPrivateKeyPath: os.Getenv(prefix + "_GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubAppAPIURL:         envDefault(prefix+"_GITHUB_APP_API_URL", defaultGitHubAPIURL),
+		SSHKeyPath:              os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixSSHKeyPath)),
+		Username:                os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixAuthUsername)),
+		Password:                os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixAuthPassword)),
+		GitHubAppID:             os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixGitHubAppID)),
+		GitHubAppInstallationID: os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixGitHubAppInstallationID)),
+		GitHubAppPrivateKeyPath: os.Getenv(syncenv.Endpoint(prefix, syncenv.SuffixGitHubAppPrivateKeyPath)),
+		GitHubAppAPIURL:         envDefault(syncenv.Endpoint(prefix, syncenv.SuffixGitHubAppAPIURL), defaultGitHubAPIURL),
 	}
 }
 
@@ -168,7 +168,7 @@ func prepareEndpointAuth(name string, auth EndpointAuth, dir string) (EndpointAu
 	switch auth.Type {
 	case "":
 		return auth, nil
-	case authTypeSSH:
+	case syncenv.AuthTypeSSH:
 		if auth.SSHKeyPath == "" {
 			return auth, fmt.Errorf("%s SSH auth requires an SSH key path", name)
 		}
@@ -177,14 +177,14 @@ func prepareEndpointAuth(name string, auth EndpointAuth, dir string) (EndpointAu
 			return auth, fmt.Errorf("prepare %s SSH key: %w", name, err)
 		}
 		auth.SSHKeyPath = keyPath
-	case authTypeGitHubApp:
-		token, err := createGitHubAppInstallationToken(auth, http.DefaultClient, time.Now)
+	case syncenv.AuthTypeGitHubApp:
+		token, err := createGitHubAppInstallationToken(auth, githubAppHTTPClient, time.Now)
 		if err != nil {
 			return auth, fmt.Errorf("create %s GitHub App installation token: %w", name, err)
 		}
 		auth.Username = "x-access-token"
 		auth.Password = token
-	case authTypeBasic:
+	case syncenv.AuthTypeBasic:
 		// Basic credentials are already supplied by environment variables.
 	default:
 		return auth, fmt.Errorf("unsupported %s auth type %q", name, auth.Type)
@@ -216,13 +216,13 @@ func copyPrivateFile(src, dst string) (string, error) {
 
 func validateEndpointAuth(name, rawURL string, auth EndpointAuth) error {
 	switch auth.Type {
-	case authTypeSSH:
+	case syncenv.AuthTypeSSH:
 		if auth.SSHKeyPath == "" {
 			return fmt.Errorf("%s SSH auth requires an SSH key path", name)
 		}
-	case authTypeBasic, authTypeGitHubApp:
-		if !isHTTPURL(rawURL) {
-			return fmt.Errorf("%s %s auth requires an HTTP(S) git URL", name, auth.Type)
+	case syncenv.AuthTypeBasic, syncenv.AuthTypeGitHubApp:
+		if !isHTTPSURL(rawURL) {
+			return fmt.Errorf("%s %s auth requires an HTTPS git URL", name, auth.Type)
 		}
 		if auth.Username == "" || auth.Password == "" {
 			return fmt.Errorf("%s %s auth requires username and password credentials", name, auth.Type)
@@ -235,20 +235,20 @@ func validateEndpointAuth(name, rawURL string, auth EndpointAuth) error {
 	return nil
 }
 
-func isHTTPURL(rawURL string) bool {
+func isHTTPSURL(rawURL string) bool {
 	parsed, err := neturl.Parse(rawURL)
 	if err != nil {
 		return false
 	}
-	return parsed.Scheme == "http" || parsed.Scheme == "https"
+	return parsed.Scheme == "https"
 }
 
 func gitAuthEnv(cfg Config, auth EndpointAuth) ([]string, error) {
 	switch auth.Type {
-	case authTypeSSH:
+	case syncenv.AuthTypeSSH:
 		return []string{gitSSHCommand(cfg, auth.SSHKeyPath)}, nil
-	case authTypeBasic, authTypeGitHubApp:
-		askpassPath, err := ensureAskPassScript(preparedCredentialDir)
+	case syncenv.AuthTypeBasic, syncenv.AuthTypeGitHubApp:
+		askpassPath, err := ensureAskPassScript(preparedCredentialDir())
 		if err != nil {
 			return nil, err
 		}
@@ -261,6 +261,10 @@ func gitAuthEnv(cfg Config, auth EndpointAuth) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported auth type %q", auth.Type)
 	}
+}
+
+func preparedCredentialDir() string {
+	return filepath.Join(os.TempDir(), preparedCredentialDirName)
 }
 
 func ensureAskPassScript(dir string) (string, error) {
@@ -332,13 +336,18 @@ func createGitHubAppInstallationToken(auth EndpointAuth, client *http.Client, no
 		return "", err
 	}
 	requestURL := strings.TrimRight(apiURL, "/") + "/app/installations/" + neturl.PathEscape(auth.GitHubAppInstallationID) + "/access_tokens"
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(nil))
+	ctx, cancel := context.WithTimeout(context.Background(), githubAppTokenRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(nil))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if client == nil {
+		client = githubAppHTTPClient
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
