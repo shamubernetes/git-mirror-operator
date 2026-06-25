@@ -77,12 +77,23 @@ jobs:
           make test-e2e
           make check-generated-drift
 
+  known-hosts:
+    name: Verify known_hosts freshness
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify default known_hosts entries are current
+        run: make check-known-hosts-current
+
   images:
     name: Publish ${{ matrix.name }} image
     needs:
       - lint
       - test
       - test-e2e
+      - known-hosts
     runs-on: blacksmith-2vcpu-ubuntu-2404
     strategy:
       fail-fast: false
