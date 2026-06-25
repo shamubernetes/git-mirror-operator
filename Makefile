@@ -122,11 +122,17 @@ check-generated-drift: ## Verify generated files and module metadata are current
 		exit 1; \
 	}
 
+.PHONY: check-known-hosts-current
+check-known-hosts-current: ## Verify default known_hosts entries match current upstream host keys.
+	./hack/verify-known-hosts-current.sh
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
+# CertManager and teardown are enabled by default for local runs. CI can skip them with:
 # - CERT_MANAGER_INSTALL_SKIP=true
+# - E2E_SKIP_TEARDOWN=true
 KIND_CLUSTER ?= git-mirror-operator-test-e2e
+E2E_SKIP_TEARDOWN ?= false
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -146,7 +152,11 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	@status=0; \
 	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v || status=$$?; \
-	$(MAKE) cleanup-test-e2e || { cleanup_status=$$?; [ $$status -ne 0 ] || status=$$cleanup_status; }; \
+	if [ "$(E2E_SKIP_TEARDOWN)" != "true" ]; then \
+		$(MAKE) cleanup-test-e2e || { cleanup_status=$$?; [ $$status -ne 0 ] || status=$$cleanup_status; }; \
+	else \
+		echo "Skipping Kind cleanup because E2E_SKIP_TEARDOWN=true"; \
+	fi; \
 	exit $$status
 
 .PHONY: cleanup-test-e2e
@@ -218,7 +228,10 @@ docker-buildx-sync: ## Build and push docker image for the sync runner for cross
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	@tmp=$$(mktemp); \
+	cp config/manager/kustomization.yaml $$tmp; \
+	trap 'cp $$tmp config/manager/kustomization.yaml; rm -f $$tmp' EXIT; \
+	(cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}); \
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 ##@ Deployment
@@ -237,7 +250,10 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	@tmp=$$(mktemp); \
+	cp config/manager/kustomization.yaml $$tmp; \
+	trap 'cp $$tmp config/manager/kustomization.yaml; rm -f $$tmp' EXIT; \
+	(cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}); \
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
@@ -333,7 +349,10 @@ endif
 .PHONY: bundle
 bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metadata, then validate generated files.
 	$(OPERATOR_SDK) generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	@tmp=$$(mktemp); \
+	cp config/manager/kustomization.yaml $$tmp; \
+	trap 'cp $$tmp config/manager/kustomization.yaml; rm -f $$tmp' EXIT; \
+	(cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)); \
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	$(OPERATOR_SDK) bundle validate ./bundle
 

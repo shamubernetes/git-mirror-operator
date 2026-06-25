@@ -21,6 +21,12 @@ make test-e2e
 
 The e2e suite creates and deletes an ephemeral Kind cluster. It does not deploy to a real cluster.
 
+CI skips cert-manager installation and teardown to reduce runtime:
+
+```bash
+CERT_MANAGER_INSTALL_SKIP=true E2E_SKIP_TEARDOWN=true make test-e2e
+```
+
 ## Generated Files
 
 After API or marker changes, regenerate code and manifests:
@@ -33,12 +39,14 @@ Commit generated CRDs, RBAC, and deepcopy files with the source change that requ
 
 ## Images
 
-Runtime images are built by GitHub Actions on pull requests and published to GHCR from `main` and version tags. Local image builds are available with:
+Runtime images are published to GHCR by the `Release Images` workflow from semantic version tags after lint, unit/envtest, and e2e checks pass. Local image builds are available with:
 
 ```bash
 make docker-build IMG=ghcr.io/shamubernetes/git-mirror-operator:dev
 make docker-build-sync SYNC_IMG=ghcr.io/shamubernetes/git-mirror-sync:dev
 ```
+
+CI uses the Blacksmith free-tier runner label `blacksmith-2vcpu-ubuntu-2404`.
 
 ## Pull Requests
 
