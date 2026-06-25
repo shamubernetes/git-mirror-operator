@@ -94,6 +94,11 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
+	if os.Getenv("E2E_SKIP_TEARDOWN") == "true" {
+		_, _ = fmt.Fprintln(GinkgoWriter, "Skipping cert-manager teardown because E2E_SKIP_TEARDOWN=true")
+		return
+	}
+
 	// Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")

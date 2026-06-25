@@ -52,6 +52,7 @@ const metricsRoleBindingName = "git-mirror-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
+	skipTeardown := os.Getenv("E2E_SKIP_TEARDOWN") == "true"
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
@@ -82,6 +83,11 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		if skipTeardown {
+			_, _ = fmt.Fprintln(GinkgoWriter, "Skipping e2e teardown because E2E_SKIP_TEARDOWN=true")
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)

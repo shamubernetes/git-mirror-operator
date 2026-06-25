@@ -45,7 +45,6 @@ jobs:
 
       - name: Run tests
         run: |
-          go mod tidy
           make test
           make check-generated-drift
 
@@ -71,8 +70,10 @@ jobs:
         run: kind version
 
       - name: Run e2e tests
+        env:
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_SKIP_TEARDOWN: "true"
         run: |
-          go mod tidy
           make test-e2e
           make check-generated-drift
 

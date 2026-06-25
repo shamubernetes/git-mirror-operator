@@ -21,6 +21,12 @@ make test-e2e
 
 The e2e suite creates and deletes an ephemeral Kind cluster. It does not deploy to a real cluster.
 
+CI skips cert-manager installation and teardown to reduce runtime:
+
+```bash
+CERT_MANAGER_INSTALL_SKIP=true E2E_SKIP_TEARDOWN=true make test-e2e
+```
+
 ## Generated Files
 
 After API or marker changes, regenerate code and manifests:
