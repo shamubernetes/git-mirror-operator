@@ -24,6 +24,9 @@ const (
 	LabelSourceOwner    = "mirror.maude.dev/source-owner"
 	LabelSourceRepo     = "mirror.maude.dev/source-repo"
 	AnnotationRevision  = "mirror.maude.dev/revision"
+	AnnotationGitMirror = "mirror.maude.dev/gitmirror-name"
+	AnnotationOwner     = "mirror.maude.dev/full-source-owner"
+	AnnotationRepo      = "mirror.maude.dev/full-source-repo"
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
 )
 
@@ -82,6 +85,9 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 		labels[LabelDeliveryID] = SanitizeLabelValue(opts.TriggerID)
 	}
 	annotations := map[string]string{}
+	for key, value := range AnnotationsForMirror(mirror) {
+		annotations[key] = value
+	}
 	if opts.Revision != "" {
 		annotations[AnnotationRevision] = opts.Revision
 	}
@@ -203,9 +209,17 @@ func NameForMirrorTrigger(mirror *mirrorv1alpha1.GitMirror, triggerID string) st
 func LabelsForMirror(mirror *mirrorv1alpha1.GitMirror) map[string]string {
 	return map[string]string{
 		LabelName:        AppName,
-		LabelGitMirror:   mirror.Name,
-		LabelSourceOwner: mirror.Spec.GitHub.Owner,
-		LabelSourceRepo:  mirror.Spec.GitHub.Repo,
+		LabelGitMirror:   SanitizeLabelValue(mirror.Name),
+		LabelSourceOwner: SanitizeLabelValue(mirror.Spec.GitHub.Owner),
+		LabelSourceRepo:  SanitizeLabelValue(mirror.Spec.GitHub.Repo),
+	}
+}
+
+func AnnotationsForMirror(mirror *mirrorv1alpha1.GitMirror) map[string]string {
+	return map[string]string{
+		AnnotationGitMirror: mirror.Name,
+		AnnotationOwner:     mirror.Spec.GitHub.Owner,
+		AnnotationRepo:      mirror.Spec.GitHub.Repo,
 	}
 }
 
@@ -235,11 +249,21 @@ func dnsLabel(s string) string {
 }
 
 func SanitizeLabelValue(s string) string {
-	s = dnsLabel(s)
-	if len(s) > 63 {
-		s = s[:63]
+	clean := strings.Trim(dnsLabel(s), "-")
+	if clean == "" {
+		clean = "value"
 	}
-	return strings.Trim(s, "-")
+	if len(clean) <= 63 {
+		return clean
+	}
+	sum := sha256.Sum256([]byte(s))
+	hash := hex.EncodeToString(sum[:])[:12]
+	maxBase := 63 - len(hash) - 1
+	clean = strings.Trim(clean[:maxBase], "-")
+	if clean == "" {
+		clean = "value"
+	}
+	return clean + "-" + hash
 }
 
 func int32Ptr(v int32) *int32 { return &v }

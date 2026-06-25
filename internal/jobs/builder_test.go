@@ -1,12 +1,14 @@
 package jobs_test
 
 import (
+	"strings"
 	"testing"
 
 	mirrorv1alpha1 "github.com/shamubernetes/git-mirror-operator/api/v1alpha1"
 	"github.com/shamubernetes/git-mirror-operator/internal/jobs"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 func baseMirror() *mirrorv1alpha1.GitMirror {
@@ -85,6 +87,45 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	if securityContext == nil || securityContext.SeccompProfile == nil ||
 		securityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("expected pod seccomp profile RuntimeDefault, got %#v", securityContext)
+	}
+}
+
+func TestBuildSyncJobSanitizesLongLabelValues(t *testing.T) {
+	mirror := baseMirror()
+	mirror.Name = "source-repo-" + strings.Repeat("very-long-name-", 8)
+	mirror.Spec.GitHub.Owner = "owner-" + strings.Repeat("long-", 20)
+	mirror.Spec.GitHub.Repo = "repo-" + strings.Repeat("long-", 20)
+
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev", TriggerID: "delivery-" + strings.Repeat("long-", 20)})
+	if err != nil {
+		t.Fatalf("expected job: %v", err)
+	}
+
+	for _, key := range []string{jobs.LabelGitMirror, jobs.LabelSourceOwner, jobs.LabelSourceRepo, jobs.LabelDeliveryID} {
+		value := syncJob.Job.Labels[key]
+		assertValidLabelValue(t, key, value)
+		if strings.Contains(value, strings.Repeat("long-", 10)) {
+			t.Fatalf("expected %s to be hash-truncated, got %q", key, value)
+		}
+	}
+	if got := syncJob.Job.Annotations[jobs.AnnotationGitMirror]; got != mirror.Name {
+		t.Fatalf("expected full mirror name annotation, got %q", got)
+	}
+	if got := syncJob.Job.Annotations[jobs.AnnotationOwner]; got != mirror.Spec.GitHub.Owner {
+		t.Fatalf("expected full owner annotation, got %q", got)
+	}
+	if got := syncJob.Job.Annotations[jobs.AnnotationRepo]; got != mirror.Spec.GitHub.Repo {
+		t.Fatalf("expected full repo annotation, got %q", got)
+	}
+}
+
+func assertValidLabelValue(t *testing.T, key, value string) {
+	t.Helper()
+	if len(value) > 63 {
+		t.Fatalf("expected %s label value <= 63 chars, got %d: %q", key, len(value), value)
+	}
+	if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
+		t.Fatalf("invalid %s label value %q: %v", key, value, errs)
 	}
 }
 

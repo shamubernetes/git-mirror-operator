@@ -60,7 +60,8 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	var jobList batchv1.JobList
-	if err := r.List(ctx, &jobList, client.InNamespace(mirror.Namespace), client.MatchingLabels{jobs.LabelGitMirror: mirror.Name}); err != nil {
+	labels := jobs.LabelsForMirror(&mirror)
+	if err := r.List(ctx, &jobList, client.InNamespace(mirror.Namespace), client.MatchingLabels{jobs.LabelGitMirror: labels[jobs.LabelGitMirror]}); err != nil {
 		return ctrl.Result{}, err
 	}
 	now := metav1.NewTime(r.now())
@@ -169,13 +170,14 @@ func (r *GitMirrorReconciler) createLockedSyncJob(ctx context.Context, mirror *m
 
 func (r *GitMirrorReconciler) acquireSyncLease(ctx context.Context, mirror *mirrorv1alpha1.GitMirror, holder string) (bool, error) {
 	now := metav1.MicroTime{Time: r.now()}
+	labels := jobs.LabelsForMirror(mirror)
 	lease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      SyncLeaseName(mirror),
 			Namespace: mirror.Namespace,
 			Labels: map[string]string{
-				jobs.LabelName:      jobs.AppName,
-				jobs.LabelGitMirror: mirror.Name,
+				jobs.LabelName:      labels[jobs.LabelName],
+				jobs.LabelGitMirror: labels[jobs.LabelGitMirror],
 			},
 		},
 		Spec: coordinationv1.LeaseSpec{

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,6 +189,61 @@ func TestReconcileCompletedJobRecordsRevisionAndSchedulesFollowup(t *testing.T) 
 	}
 	if mirrorAfter.Status.PendingResync {
 		t.Fatal("expected pending resync cleared")
+	}
+}
+
+func TestReconcileCompletedJobWithLongMirrorNameUsesSafeSelector(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := mirrorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	mirror := testGitMirror()
+	mirror.Name = "source-repo-" + strings.Repeat("very-long-name-", 8)
+	mirror.Spec.GitHub.Owner = "owner-" + strings.Repeat("long-", 20)
+	mirror.Spec.GitHub.Repo = "repo-" + strings.Repeat("long-", 20)
+	mirror.Status.LastJobName = "gitmirror-source-repo-active"
+	labels := jobs.LabelsForMirror(mirror)
+	completedJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gitmirror-source-repo-active",
+			Namespace: "mirrors",
+			Labels: map[string]string{
+				jobs.LabelGitMirror: labels[jobs.LabelGitMirror],
+			},
+			Annotations: map[string]string{
+				jobs.AnnotationRevision: "abc123",
+			},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobComplete,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&mirrorv1alpha1.GitMirror{}).
+		WithObjects(mirror, completedJob).
+		Build()
+	reconciler := &GitMirrorReconciler{
+		Client:           c,
+		Scheme:           scheme,
+		DefaultSyncImage: "example/git-mirror-sync:dev",
+		Clock:            func() time.Time { return time.Date(2026, 6, 24, 10, 12, 0, 0, time.UTC) },
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(mirror)}); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	var mirrorAfter mirrorv1alpha1.GitMirror
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(mirror), &mirrorAfter); err != nil {
+		t.Fatal(err)
+	}
+	if mirrorAfter.Status.LastMirroredRevision != "abc123" {
+		t.Fatalf("expected completed revision recorded through safe selector, got %q", mirrorAfter.Status.LastMirroredRevision)
 	}
 }
 
