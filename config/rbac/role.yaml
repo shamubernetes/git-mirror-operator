@@ -39,7 +39,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - mirror.maude.dev
+  - mirror.shamubernetes.com
   resources:
   - gitmirrors
   verbs:
@@ -49,7 +49,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - mirror.maude.dev
+  - mirror.shamubernetes.com
   resources:
   - gitmirrors/status
   verbs:

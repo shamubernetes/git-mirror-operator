@@ -18,7 +18,7 @@ This is an Operator SDK Go project using the Kubebuilder/controller-runtime layo
 
 ## API
 
-API group: `mirror.maude.dev/v1alpha1`
+API group: `mirror.shamubernetes.com/v1alpha1`
 
 Kind: `GitMirror`
 

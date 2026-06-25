@@ -86,7 +86,7 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	if hasEnv(syncJob, "PRUNE") {
 		t.Fatal("did not expect PRUNE env; exact mode always prunes and additive mode never prunes")
 	}
-	if got := syncJob.Job.Labels["mirror.maude.dev/source-owner"]; got != "example" {
+	if got := syncJob.Job.Labels["mirror.shamubernetes.com/source-owner"]; got != "example" {
 		t.Fatalf("expected owner label, got %q", got)
 	}
 	if len(syncJob.Job.Spec.Template.Spec.Volumes) < 2 {

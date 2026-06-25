@@ -61,7 +61,7 @@ replacements:
 - source:
     kind: ServiceAccount
     name: git-mirror-sync
-    fieldPath: metadata.annotations.[mirror.maude.dev/fixed-name]
+    fieldPath: metadata.annotations.[mirror.shamubernetes.com/fixed-name]
   targets:
   - select:
       kind: ServiceAccount
@@ -71,7 +71,7 @@ replacements:
 - source:
     kind: ConfigMap
     name: git-mirror-known-hosts
-    fieldPath: metadata.annotations.[mirror.maude.dev/fixed-name]
+    fieldPath: metadata.annotations.[mirror.shamubernetes.com/fixed-name]
   targets:
   - select:
       kind: ConfigMap

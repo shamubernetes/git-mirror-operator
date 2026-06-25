@@ -20,14 +20,14 @@ import (
 const (
 	AppName             = "git-mirror-operator"
 	LabelName           = "app.kubernetes.io/name"
-	LabelGitMirror      = "mirror.maude.dev/gitmirror"
-	LabelDeliveryID     = "mirror.maude.dev/delivery-id"
-	LabelSourceOwner    = "mirror.maude.dev/source-owner"
-	LabelSourceRepo     = "mirror.maude.dev/source-repo"
-	AnnotationRevision  = "mirror.maude.dev/revision"
-	AnnotationGitMirror = "mirror.maude.dev/gitmirror-name"
-	AnnotationOwner     = "mirror.maude.dev/full-source-owner"
-	AnnotationRepo      = "mirror.maude.dev/full-source-repo"
+	LabelGitMirror      = "mirror.shamubernetes.com/gitmirror"
+	LabelDeliveryID     = "mirror.shamubernetes.com/delivery-id"
+	LabelSourceOwner    = "mirror.shamubernetes.com/source-owner"
+	LabelSourceRepo     = "mirror.shamubernetes.com/source-repo"
+	AnnotationRevision  = "mirror.shamubernetes.com/revision"
+	AnnotationGitMirror = "mirror.shamubernetes.com/gitmirror-name"
+	AnnotationOwner     = "mirror.shamubernetes.com/full-source-owner"
+	AnnotationRepo      = "mirror.shamubernetes.com/full-source-repo"
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
 )
 

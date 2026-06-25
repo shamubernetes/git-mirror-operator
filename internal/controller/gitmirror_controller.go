@@ -45,8 +45,8 @@ type GitMirrorReconciler struct {
 	Clock            func() time.Time
 }
 
-// +kubebuilder:rbac:groups=mirror.maude.dev,resources=gitmirrors,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=mirror.maude.dev,resources=gitmirrors/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mirror.shamubernetes.com,resources=gitmirrors,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=mirror.shamubernetes.com,resources=gitmirrors/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create;get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get

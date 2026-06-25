@@ -285,7 +285,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("creating a GitMirror resource")
 			applyManifest(fmt.Sprintf(`
-apiVersion: mirror.maude.dev/v1alpha1
+apiVersion: mirror.shamubernetes.com/v1alpha1
 kind: GitMirror
 metadata:
   name: source-repo
@@ -353,7 +353,7 @@ spec:
 			var jobName string
 			verifyJob := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "jobs", "-n", namespace,
-					"-l", "mirror.maude.dev/gitmirror=source-repo",
+					"-l", "mirror.shamubernetes.com/gitmirror=source-repo",
 					"-o", "jsonpath={.items[*].metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -411,7 +411,7 @@ spec:
 
 			By("creating a GitMirror resource with GitHub App source auth and basic target auth")
 			applyManifest(fmt.Sprintf(`
-apiVersion: mirror.maude.dev/v1alpha1
+apiVersion: mirror.shamubernetes.com/v1alpha1
 kind: GitMirror
 metadata:
   name: source-repo-modern
@@ -482,7 +482,7 @@ spec:
 			var modernJobName string
 			verifyModernJob := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "jobs", "-n", namespace,
-					"-l", "mirror.maude.dev/gitmirror=source-repo-modern",
+					"-l", "mirror.shamubernetes.com/gitmirror=source-repo-modern",
 					"-o", "jsonpath={.items[*].metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())

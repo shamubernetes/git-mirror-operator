@@ -1,4 +1,4 @@
-apiVersion: mirror.maude.dev/v1alpha1
+apiVersion: mirror.shamubernetes.com/v1alpha1
 kind: GitMirror
 metadata:
   labels:
