@@ -10,6 +10,8 @@ This is an Operator SDK Go project using the Kubebuilder/controller-runtime layo
 - It exposes `POST /webhooks/github`, `GET /healthz`, and `GET /readyz`.
 - Push webhooks are matched to `GitMirror` resources by `repository.full_name`.
 - The matching resource's webhook secret is loaded before verifying `X-Hub-Signature-256`.
+- The webhook records sync intent in `GitMirror.status`; the reconciler owns sync Job creation.
+- A per-repository `coordination.k8s.io/v1` Lease prevents concurrent sync Job creation across reconciler instances.
 - A Kubernetes Job runs the sync runner image with source and target SSH keys mounted from Secrets.
 - Owned Jobs are watched by controller-runtime and update `GitMirror.status`.
 - `spec.fallback.schedule` can trigger scheduled catch-up syncs with the same active-job coalescing rules.

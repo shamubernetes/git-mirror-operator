@@ -27,6 +27,24 @@ func ApplyWebhookState(mirror *mirrorv1alpha1.GitMirror, deliveryID string, now 
 	return true
 }
 
+func ApplyWebhookIntent(mirror *mirrorv1alpha1.GitMirror, deliveryID, revision string, now metav1.Time) {
+	mirror.Status.ObservedGeneration = mirror.Generation
+	mirror.Status.LastWebhookAt = now.DeepCopy()
+	mirror.Status.LastDeliveryID = deliveryID
+	if revision != "" {
+		mirror.Status.LastRequestedRevision = revision
+	}
+	mirror.Status.PendingResync = true
+	setCondition(mirror, "SyncPending", metav1.ConditionTrue, "WebhookReceived", "Webhook recorded and waiting for the reconciler to schedule a sync job")
+}
+
+func ApplySyncScheduled(mirror *mirrorv1alpha1.GitMirror, jobName string, now metav1.Time) {
+	mirror.Status.LastTriggeredAt = now.DeepCopy()
+	mirror.Status.LastJobName = jobName
+	mirror.Status.PendingResync = false
+	setCondition(mirror, "SyncPending", metav1.ConditionFalse, "JobScheduled", "Sync job scheduled")
+}
+
 func ApplyCompletedJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, now metav1.Time) bool {
 	mirror.Status.LastJobName = job.Name
 	mirror.Status.LastCompletedJobName = job.Name
