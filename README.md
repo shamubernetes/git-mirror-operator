@@ -12,7 +12,7 @@ This is an Operator SDK Go project using the Kubebuilder/controller-runtime layo
 - The matching resource's webhook secret is loaded before verifying `X-Hub-Signature-256`.
 - The webhook records sync intent in `GitMirror.status`; the reconciler owns sync Job creation.
 - A per-repository `coordination.k8s.io/v1` Lease prevents concurrent sync Job creation across reconciler instances.
-- A Kubernetes Job runs the sync runner image with source and target SSH keys mounted from Secrets.
+- A Kubernetes Job runs the sync runner image with source and target credentials loaded from Secrets.
 - Owned Jobs are watched by controller-runtime and update `GitMirror.status`.
 - `spec.fallback.schedule` can trigger scheduled catch-up syncs with the same active-job coalescing rules.
 
@@ -27,8 +27,8 @@ Important spec fields:
 - `provider`: currently `github`
 - `github.owner`, `github.repo`
 - `github.webhookSecretRef.name`, `github.webhookSecretRef.key`
-- `source.url`, `source.sshSecretRef.name`, `source.sshSecretRef.key`
-- `target.url`, `target.sshSecretRef.name`, `target.sshSecretRef.key`
+- `source.url`, `source.auth` or legacy `source.sshSecretRef`
+- `target.url`, `target.auth` or legacy `target.sshSecretRef`
 - `mirror.mode`: `exact` or `additive`
 - `mirror.includeTags`: additive mode only; exact mode mirrors all refs including tags
 - `fallback.schedule`: optional cron expression
@@ -49,7 +49,7 @@ https://<your-host>/webhooks/github
 ```
 
 Use content type `application/json`, enable push events, and configure the same secret in the `github.webhookSecretRef` Kubernetes Secret.
-Placeholder webhook and SSH key Secret manifests are included in `config/samples/mirror_v1alpha1_secrets.yaml`.
+Placeholder webhook and auth Secret manifests are included in `config/samples/mirror_v1alpha1_secrets.yaml`.
 
 Ping events are accepted without repository lookup. Unsupported GitHub event types are rejected. Push events require:
 
@@ -63,7 +63,63 @@ The default install creates the `git-mirror-sync` ServiceAccount used by sync Jo
 
 ## Sync Runner
 
-Sync Jobs run as non-root. SSH key Secrets are mounted read-only and readable by that UID; before invoking git, the runner copies each key into a private `/tmp/git-mirror-ssh` directory, chmods the copy to `0400`, and points `GIT_SSH_COMMAND` at the copied key.
+Sync Jobs run as non-root. SSH key Secrets are mounted read-only and readable by that UID; before invoking git, the runner copies each key into a private `/tmp/git-mirror-credentials` directory, chmods the copy to `0400`, and points `GIT_SSH_COMMAND` at the copied key. HTTPS credentials are supplied to git through a private `GIT_ASKPASS` helper so tokens do not need to appear in repository URLs or command logs.
+
+## Git Authentication
+
+Each endpoint can choose its own auth method. Existing manifests that use `sshSecretRef` still work, but new manifests should prefer `auth`.
+
+SSH deploy key:
+
+```yaml
+source:
+  url: git@github.com:example/source-repo.git
+  auth:
+    type: ssh
+    ssh:
+      privateKeyRef:
+        name: source-repo-source-ssh
+        key: ssh-privatekey
+```
+
+Generic HTTPS username/token auth:
+
+```yaml
+target:
+  url: https://codeberg.org/example/source-repo.git
+  auth:
+    type: basic
+    basic:
+      usernameSecretRef:
+        name: source-repo-target-basic
+        key: username
+      passwordSecretRef:
+        name: source-repo-target-basic
+        key: password
+```
+
+Use `auth.type=basic` for hosters that expose Git over HTTPS with a username plus token or password credential: GitHub personal access tokens, GitLab personal/project/group access tokens or deploy tokens, Bitbucket Cloud API tokens, and Codeberg/Forgejo access tokens.
+
+GitHub App installation token:
+
+```yaml
+source:
+  url: https://github.com/example/source-repo.git
+  auth:
+    type: githubApp
+    githubApp:
+      appIDSecretRef:
+        name: source-repo-github-app
+        key: app-id
+      installationIDSecretRef:
+        name: source-repo-github-app
+        key: installation-id
+      privateKeySecretRef:
+        name: source-repo-github-app
+        key: private-key.pem
+```
+
+`githubApp.appIDSecretRef` may contain either the GitHub App client ID or app ID. The sync runner creates a short-lived installation access token inside the Job, uses `x-access-token` as the HTTPS username, and uses the installation token as the HTTPS password. For GitHub Enterprise Server, set `githubApp.apiURL` to the server REST API base URL.
 
 Exact mode mirrors all refs, including tags, and prunes target refs that no longer exist at the source. `mirror.includeTags` does not apply in exact mode.
 

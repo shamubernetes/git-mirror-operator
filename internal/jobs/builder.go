@@ -30,6 +30,12 @@ const (
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
 )
 
+const (
+	authTypeSSH       = "ssh"
+	authTypeBasic     = "basic"
+	authTypeGitHubApp = "githubApp"
+)
+
 type Options struct {
 	DefaultImage string
 	Scheme       *runtime.Scheme
@@ -92,12 +98,23 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	if mode == "additive" {
 		env = append(env, corev1.EnvVar{Name: "INCLUDE_TAGS", Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)})
 	}
-	env = append(env,
-		corev1.EnvVar{Name: "SOURCE_SSH_KEY_PATH", Value: "/var/run/git-mirror/source/ssh_key"},
-		corev1.EnvVar{Name: "TARGET_SSH_KEY_PATH", Value: "/var/run/git-mirror/target/ssh_key"},
-		corev1.EnvVar{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"},
-		corev1.EnvVar{Name: "HOME", Value: "/tmp"},
-	)
+	env = append(env, corev1.EnvVar{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"}, corev1.EnvVar{Name: "HOME", Value: "/tmp"})
+	authMounts := []corev1.VolumeMount{}
+	authVolumes := []corev1.Volume{}
+	sourceEnv, sourceMounts, sourceVolumes, err := endpointAuth("SOURCE", "source", mirror.Spec.Source)
+	if err != nil {
+		return nil, err
+	}
+	targetEnv, targetMounts, targetVolumes, err := endpointAuth("TARGET", "target", mirror.Spec.Target)
+	if err != nil {
+		return nil, err
+	}
+	env = append(env, sourceEnv...)
+	env = append(env, targetEnv...)
+	authMounts = append(authMounts, sourceMounts...)
+	authMounts = append(authMounts, targetMounts...)
+	authVolumes = append(authVolumes, sourceVolumes...)
+	authVolumes = append(authVolumes, targetVolumes...)
 	annotations := map[string]string{}
 	for key, value := range AnnotationsForMirror(mirror) {
 		annotations[key] = value
@@ -153,16 +170,12 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 							ReadOnlyRootFilesystem:   &readOnly,
 							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "source-ssh-key", MountPath: "/var/run/git-mirror/source/ssh_key", SubPath: mirror.Spec.Source.SSHSecretRef.Key, ReadOnly: true},
-							{Name: "target-ssh-key", MountPath: "/var/run/git-mirror/target/ssh_key", SubPath: mirror.Spec.Target.SSHSecretRef.Key, ReadOnly: true},
+						VolumeMounts: append(authMounts, []corev1.VolumeMount{
 							{Name: "known-hosts", MountPath: "/var/run/git-mirror/known-hosts/known_hosts", SubPath: "known_hosts", ReadOnly: true},
 							{Name: "tmp", MountPath: "/tmp"},
-						},
+						}...),
 					}},
-					Volumes: []corev1.Volume{
-						secretVolume("source-ssh-key", mirror.Spec.Source.SSHSecretRef),
-						secretVolume("target-ssh-key", mirror.Spec.Target.SSHSecretRef),
+					Volumes: append(authVolumes, []corev1.Volume{
 						{
 							Name: "known-hosts",
 							VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -176,7 +189,7 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 							}},
 						},
 						{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-					},
+					}...),
 				},
 			},
 		},
@@ -195,6 +208,82 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 		}
 	}
 	return &SyncJob{Job: job}, nil
+}
+
+func endpointAuth(envPrefix, pathPrefix string, endpoint mirrorv1alpha1.GitEndpointSpec) ([]corev1.EnvVar, []corev1.VolumeMount, []corev1.Volume, error) {
+	authType := ""
+	if endpoint.Auth != nil {
+		authType = endpoint.Auth.Type
+	}
+	if authType == "" && endpoint.SSHSecretRef != nil {
+		authType = authTypeSSH
+	}
+	env := []corev1.EnvVar{{Name: envPrefix + "_AUTH_TYPE", Value: authType}}
+	switch authType {
+	case authTypeSSH:
+		ref, err := sshAuthRef(endpoint)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		volumeName := pathPrefix + "-ssh-key"
+		mountPath := "/var/run/git-mirror/" + pathPrefix + "/ssh_key"
+		env = append(env, corev1.EnvVar{Name: envPrefix + "_SSH_KEY_PATH", Value: mountPath})
+		return env,
+			[]corev1.VolumeMount{{Name: volumeName, MountPath: mountPath, SubPath: ref.Key, ReadOnly: true}},
+			[]corev1.Volume{secretVolume(volumeName, *ref)},
+			nil
+	case authTypeBasic:
+		if endpoint.Auth == nil || endpoint.Auth.Basic == nil {
+			return nil, nil, nil, fmt.Errorf("%s auth.type=basic requires auth.basic", strings.ToLower(envPrefix))
+		}
+		env = append(env,
+			secretEnvVar(envPrefix+"_AUTH_USERNAME", endpoint.Auth.Basic.UsernameSecretRef),
+			secretEnvVar(envPrefix+"_AUTH_PASSWORD", endpoint.Auth.Basic.PasswordSecretRef),
+		)
+		return env, nil, nil, nil
+	case authTypeGitHubApp:
+		if endpoint.Auth == nil || endpoint.Auth.GitHubApp == nil {
+			return nil, nil, nil, fmt.Errorf("%s auth.type=githubApp requires auth.githubApp", strings.ToLower(envPrefix))
+		}
+		privateKeyPath := "/var/run/git-mirror/" + pathPrefix + "-github-app/private_key"
+		volumeName := pathPrefix + "-github-app-private-key"
+		env = append(env,
+			secretEnvVar(envPrefix+"_GITHUB_APP_ID", endpoint.Auth.GitHubApp.AppIDSecretRef),
+			secretEnvVar(envPrefix+"_GITHUB_APP_INSTALLATION_ID", endpoint.Auth.GitHubApp.InstallationIDSecretRef),
+			corev1.EnvVar{Name: envPrefix + "_GITHUB_APP_PRIVATE_KEY_PATH", Value: privateKeyPath},
+		)
+		if endpoint.Auth.GitHubApp.APIURL != "" {
+			env = append(env, corev1.EnvVar{Name: envPrefix + "_GITHUB_APP_API_URL", Value: endpoint.Auth.GitHubApp.APIURL})
+		}
+		return env,
+			[]corev1.VolumeMount{{Name: volumeName, MountPath: privateKeyPath, SubPath: endpoint.Auth.GitHubApp.PrivateKeySecretRef.Key, ReadOnly: true}},
+			[]corev1.Volume{secretVolume(volumeName, endpoint.Auth.GitHubApp.PrivateKeySecretRef)},
+			nil
+	case "":
+		return nil, nil, nil, fmt.Errorf("%s auth is required", strings.ToLower(envPrefix))
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported %s auth type %q", strings.ToLower(envPrefix), authType)
+	}
+}
+
+func sshAuthRef(endpoint mirrorv1alpha1.GitEndpointSpec) (*mirrorv1alpha1.SecretKeyRef, error) {
+	if endpoint.Auth != nil && endpoint.Auth.SSH != nil {
+		return &endpoint.Auth.SSH.PrivateKeyRef, nil
+	}
+	if endpoint.SSHSecretRef != nil {
+		return endpoint.SSHSecretRef, nil
+	}
+	return nil, fmt.Errorf("auth.type=ssh requires auth.ssh.privateKeyRef or sshSecretRef")
+}
+
+func secretEnvVar(name string, ref mirrorv1alpha1.SecretKeyRef) corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: name,
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+			Key:                  ref.Key,
+		}},
+	}
 }
 
 func NameForMirrorTrigger(mirror *mirrorv1alpha1.GitMirror, triggerID string) string {

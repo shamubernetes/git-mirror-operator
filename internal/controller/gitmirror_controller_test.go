@@ -63,11 +63,11 @@ var _ = Describe("GitMirror Controller", func() {
 						},
 						Source: mirrorv1alpha1.GitEndpointSpec{
 							URL:          "git@github.com:example/source-repo.git",
-							SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "source-key", Key: "ssh-privatekey"},
+							SSHSecretRef: &mirrorv1alpha1.SecretKeyRef{Name: "source-key", Key: "ssh-privatekey"},
 						},
 						Target: mirrorv1alpha1.GitEndpointSpec{
 							URL:          "git@codeberg.org:example/source-repo.git",
-							SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
+							SSHSecretRef: &mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
 						},
 						Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true},
 					},

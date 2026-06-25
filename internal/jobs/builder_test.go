@@ -18,11 +18,11 @@ func baseMirror() *mirrorv1alpha1.GitMirror {
 			GitHub: mirrorv1alpha1.GitHubSpec{Owner: "example", Repo: "source-repo"},
 			Source: mirrorv1alpha1.GitEndpointSpec{
 				URL:          "git@github.com:example/source-repo.git",
-				SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "source-key", Key: "ssh-privatekey"},
+				SSHSecretRef: &mirrorv1alpha1.SecretKeyRef{Name: "source-key", Key: "ssh-privatekey"},
 			},
 			Target: mirrorv1alpha1.GitEndpointSpec{
 				URL:          "git@codeberg.org:example/source-repo.git",
-				SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
+				SSHSecretRef: &mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
 			},
 			Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true},
 		},
@@ -47,6 +47,17 @@ func hasEnv(job *jobs.SyncJob, name string) bool {
 		}
 	}
 	return false
+}
+
+func envVar(t *testing.T, job *jobs.SyncJob, name string) corev1.EnvVar {
+	t.Helper()
+	for _, env := range job.Job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == name {
+			return env
+		}
+	}
+	t.Fatalf("missing env %s", name)
+	return corev1.EnvVar{}
 }
 
 func flattenedEnv(job *jobs.SyncJob) []string {
@@ -83,6 +94,12 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	}
 	assertSecretVolumeMode(t, syncJob, "source-ssh-key", 0444)
 	assertSecretVolumeMode(t, syncJob, "target-ssh-key", 0444)
+	if got := envValue(t, syncJob.Job.Name, envs, "SOURCE_AUTH_TYPE"); got != "ssh" {
+		t.Fatalf("expected source SSH auth, got %q", got)
+	}
+	if got := envValue(t, syncJob.Job.Name, envs, "TARGET_AUTH_TYPE"); got != "ssh" {
+		t.Fatalf("expected target SSH auth, got %q", got)
+	}
 	securityContext := syncJob.Job.Spec.Template.Spec.SecurityContext
 	if securityContext == nil || securityContext.SeccompProfile == nil ||
 		securityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
@@ -117,6 +134,86 @@ func TestBuildSyncJobSanitizesLongLabelValues(t *testing.T) {
 	if got := syncJob.Job.Annotations[jobs.AnnotationRepo]; got != mirror.Spec.GitHub.Repo {
 		t.Fatalf("expected full repo annotation, got %q", got)
 	}
+}
+
+func TestBuildSyncJobForBasicAuth(t *testing.T) {
+	mirror := baseMirror()
+	mirror.Spec.Source.URL = "https://github.com/example/source-repo.git"
+	mirror.Spec.Source.SSHSecretRef = nil
+	mirror.Spec.Source.Auth = &mirrorv1alpha1.GitAuthSpec{
+		Type: "basic",
+		Basic: &mirrorv1alpha1.BasicAuthSpec{
+			UsernameSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "source-basic", Key: "username"},
+			PasswordSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "source-basic", Key: "password"},
+		},
+	}
+
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev"})
+	if err != nil {
+		t.Fatalf("expected job: %v", err)
+	}
+
+	if got := envVar(t, syncJob, "SOURCE_AUTH_TYPE").Value; got != "basic" {
+		t.Fatalf("expected source basic auth, got %q", got)
+	}
+	assertSecretEnvVar(t, syncJob, "SOURCE_AUTH_USERNAME", "source-basic", "username")
+	assertSecretEnvVar(t, syncJob, "SOURCE_AUTH_PASSWORD", "source-basic", "password")
+	if hasVolume(syncJob, "source-ssh-key") {
+		t.Fatal("did not expect a source SSH volume for basic auth")
+	}
+}
+
+func TestBuildSyncJobForGitHubAppAuth(t *testing.T) {
+	mirror := baseMirror()
+	mirror.Spec.Source.URL = "https://github.com/example/source-repo.git"
+	mirror.Spec.Source.SSHSecretRef = nil
+	mirror.Spec.Source.Auth = &mirrorv1alpha1.GitAuthSpec{
+		Type: "githubApp",
+		GitHubApp: &mirrorv1alpha1.GitHubAppAuthSpec{
+			AppIDSecretRef:          mirrorv1alpha1.SecretKeyRef{Name: "github-app", Key: "app-id"},
+			InstallationIDSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "github-app", Key: "installation-id"},
+			PrivateKeySecretRef:     mirrorv1alpha1.SecretKeyRef{Name: "github-app", Key: "private-key.pem"},
+			APIURL:                  "https://github.example.com/api/v3",
+		},
+	}
+
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev"})
+	if err != nil {
+		t.Fatalf("expected job: %v", err)
+	}
+
+	if got := envVar(t, syncJob, "SOURCE_AUTH_TYPE").Value; got != "githubApp" {
+		t.Fatalf("expected source GitHub App auth, got %q", got)
+	}
+	assertSecretEnvVar(t, syncJob, "SOURCE_GITHUB_APP_ID", "github-app", "app-id")
+	assertSecretEnvVar(t, syncJob, "SOURCE_GITHUB_APP_INSTALLATION_ID", "github-app", "installation-id")
+	if got := envVar(t, syncJob, "SOURCE_GITHUB_APP_API_URL").Value; got != "https://github.example.com/api/v3" {
+		t.Fatalf("expected GitHub Enterprise API URL, got %q", got)
+	}
+	assertSecretVolumeMode(t, syncJob, "source-github-app-private-key", 0444)
+}
+
+func assertSecretEnvVar(t *testing.T, job *jobs.SyncJob, name, secretName, key string) {
+	t.Helper()
+	env := envVar(t, job, name)
+	if env.Value != "" {
+		t.Fatalf("expected %s to use valueFrom, got literal value", name)
+	}
+	if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("expected %s to use secretKeyRef, got %#v", name, env.ValueFrom)
+	}
+	if env.ValueFrom.SecretKeyRef.Name != secretName || env.ValueFrom.SecretKeyRef.Key != key {
+		t.Fatalf("expected %s secret %s/%s, got %s/%s", name, secretName, key, env.ValueFrom.SecretKeyRef.Name, env.ValueFrom.SecretKeyRef.Key)
+	}
+}
+
+func hasVolume(job *jobs.SyncJob, name string) bool {
+	for _, volume := range job.Job.Spec.Template.Spec.Volumes {
+		if volume.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func assertValidLabelValue(t *testing.T, key, value string) {
