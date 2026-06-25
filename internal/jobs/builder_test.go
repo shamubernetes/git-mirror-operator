@@ -22,7 +22,7 @@ func baseMirror() *mirrorv1alpha1.GitMirror {
 				URL:          "git@codeberg.org:example/source-repo.git",
 				SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
 			},
-			Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true, Prune: true},
+			Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true},
 		},
 	}
 }
@@ -36,6 +36,15 @@ func envValue(t *testing.T, jobName string, envs []string, name string) string {
 	}
 	t.Fatalf("%s missing env %s in %v", jobName, name, envs)
 	return ""
+}
+
+func hasEnv(job *jobs.SyncJob, name string) bool {
+	for _, env := range job.Job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func flattenedEnv(job *jobs.SyncJob) []string {
@@ -60,6 +69,9 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	}
 	if got := envValue(t, syncJob.Job.Name, envs, "INCLUDE_TAGS"); got != "true" {
 		t.Fatalf("expected include tags true, got %q", got)
+	}
+	if hasEnv(syncJob, "PRUNE") {
+		t.Fatal("did not expect PRUNE env; exact mode always prunes and additive mode never prunes")
 	}
 	if got := syncJob.Job.Labels["mirror.maude.dev/source-owner"]; got != "example" {
 		t.Fatalf("expected owner label, got %q", got)
@@ -97,6 +109,19 @@ func TestBuildSyncJobUsesStableNameForDelivery(t *testing.T) {
 	}
 	if len(first.Job.Name) > 63 {
 		t.Fatalf("job name exceeds DNS label limit: %q", first.Job.Name)
+	}
+}
+
+func TestBuildSyncJobAnnotatesRequestedRevision(t *testing.T) {
+	mirror := baseMirror()
+
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev", Revision: "abc123"})
+	if err != nil {
+		t.Fatalf("expected job: %v", err)
+	}
+
+	if got := syncJob.Job.Annotations[jobs.AnnotationRevision]; got != "abc123" {
+		t.Fatalf("expected revision annotation, got %q", got)
 	}
 }
 

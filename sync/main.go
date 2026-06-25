@@ -15,7 +15,6 @@ type Config struct {
 	TargetURL        string
 	MirrorMode       string
 	IncludeTags      bool
-	Prune            bool
 	SourceSSHKeyPath string
 	TargetSSHKeyPath string
 	KnownHostsPath   string
@@ -34,7 +33,6 @@ func ConfigFromEnv() Config {
 		TargetURL:        os.Getenv("TARGET_URL"),
 		MirrorMode:       envDefault("MIRROR_MODE", "exact"),
 		IncludeTags:      envBoolDefault("INCLUDE_TAGS", true),
-		Prune:            envBoolDefault("PRUNE", true),
 		SourceSSHKeyPath: os.Getenv("SOURCE_SSH_KEY_PATH"),
 		TargetSSHKeyPath: os.Getenv("TARGET_SSH_KEY_PATH"),
 		KnownHostsPath:   os.Getenv("KNOWN_HOSTS_PATH"),

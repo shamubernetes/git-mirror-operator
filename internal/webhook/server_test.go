@@ -66,7 +66,7 @@ func testMirror() *mirrorv1alpha1.GitMirror {
 			},
 			Source: mirrorv1alpha1.GitEndpointSpec{URL: "git@github.com:example/source-repo.git", SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "source-key", Key: "ssh-privatekey"}},
 			Target: mirrorv1alpha1.GitEndpointSpec{URL: "git@codeberg.org:example/source-repo.git", SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"}},
-			Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true, Prune: true},
+			Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true},
 		},
 	}
 }
@@ -88,6 +88,19 @@ func TestPingEventIsAccepted(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected accepted ping, got %d body %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnsupportedGitHubEventIsRejected(t *testing.T) {
+	server := testServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-GitHub-Event", "issues")
+	rec := httptest.NewRecorder()
+
+	server.HandleGitHub(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request for unsupported event, got %d body %q", rec.Code, rec.Body.String())
 	}
 }
 
@@ -115,6 +128,12 @@ func TestPushEventSchedulesKnownRepository(t *testing.T) {
 	if mirror.Status.LastJobName == "" {
 		t.Fatal("expected last job name recorded")
 	}
+	if mirror.Status.LastRequestedRevision != "abc123" {
+		t.Fatalf("expected requested revision recorded, got %q", mirror.Status.LastRequestedRevision)
+	}
+	if mirror.Status.LastMirroredRevision != "" {
+		t.Fatalf("did not expect mirrored revision before job success, got %q", mirror.Status.LastMirroredRevision)
+	}
 	var jobList batchv1.JobList
 	if err := server.Client().List(context.Background(), &jobList); err != nil {
 		t.Fatal(err)
@@ -124,6 +143,9 @@ func TestPushEventSchedulesKnownRepository(t *testing.T) {
 	}
 	if jobList.Items[0].Name != mirror.Status.LastJobName {
 		t.Fatalf("expected status job %q to match created job %q", mirror.Status.LastJobName, jobList.Items[0].Name)
+	}
+	if got := jobList.Items[0].Annotations[jobs.AnnotationRevision]; got != "abc123" {
+		t.Fatalf("expected job revision annotation, got %q", got)
 	}
 }
 
@@ -197,6 +219,12 @@ func TestPushEventCoalescesWhenActiveJobExists(t *testing.T) {
 	if !mirrorAfter.Status.PendingResync {
 		t.Fatal("expected pending resync")
 	}
+	if mirrorAfter.Status.LastRequestedRevision != "def456" {
+		t.Fatalf("expected requested revision recorded, got %q", mirrorAfter.Status.LastRequestedRevision)
+	}
+	if mirrorAfter.Status.LastMirroredRevision != "" {
+		t.Fatalf("did not expect mirrored revision before job success, got %q", mirrorAfter.Status.LastMirroredRevision)
+	}
 	var jobList batchv1.JobList
 	if err := server.Client().List(context.Background(), &jobList); err != nil {
 		t.Fatal(err)
@@ -235,6 +263,12 @@ func TestPushEventAdoptsExistingJobForSameDelivery(t *testing.T) {
 	if mirrorAfter.Status.LastJobName != existingJob.Job.Name {
 		t.Fatalf("expected status to adopt existing job %q, got %q", existingJob.Job.Name, mirrorAfter.Status.LastJobName)
 	}
+	if mirrorAfter.Status.LastRequestedRevision != "abc123" {
+		t.Fatalf("expected requested revision recorded, got %q", mirrorAfter.Status.LastRequestedRevision)
+	}
+	if mirrorAfter.Status.LastMirroredRevision != "" {
+		t.Fatalf("did not expect mirrored revision before job success, got %q", mirrorAfter.Status.LastMirroredRevision)
+	}
 }
 
 func TestPushEventRejectsUnknownRepository(t *testing.T) {
@@ -266,5 +300,20 @@ func TestPushEventRejectsInvalidSignature(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected unauthorized, got %d body %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPushEventRejectsMissingDeliveryID(t *testing.T) {
+	body := []byte(`{"repository":{"full_name":"example/source-repo"},"after":"abc123"}`)
+	server := testServer(t, testMirror(), testSecret())
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", signed(body, "webhook-secret"))
+	rec := httptest.NewRecorder()
+
+	server.HandleGitHub(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body %q", rec.Code, rec.Body.String())
 	}
 }

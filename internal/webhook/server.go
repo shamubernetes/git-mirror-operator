@@ -74,7 +74,7 @@ func (s *Server) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if event != "push" {
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "ignored"})
+		http.Error(w, "unsupported GitHub event", http.StatusBadRequest)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
@@ -102,34 +102,37 @@ func (s *Server) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
-	if deliveryID != "" && mirror.Status.LastDeliveryID == deliveryID {
+	if deliveryID == "" {
+		http.Error(w, "missing X-GitHub-Delivery", http.StatusBadRequest)
+		return
+	}
+	if mirror.Status.LastDeliveryID == deliveryID {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate"})
 		return
 	}
 	now := metav1.NewTime(s.now())
-	if deliveryID != "" {
-		existingJob, err := s.jobForDelivery(r.Context(), mirror, deliveryID)
-		if err != nil {
-			http.Error(w, "list jobs", http.StatusInternalServerError)
+	revision := gh.ExtractAfterRevision(body)
+	existingJob, err := s.jobForDelivery(r.Context(), mirror, deliveryID)
+	if err != nil {
+		http.Error(w, "list jobs", http.StatusInternalServerError)
+		return
+	}
+	if existingJob != nil {
+		mirror.Status.ObservedGeneration = mirror.Generation
+		mirror.Status.LastWebhookAt = now.DeepCopy()
+		mirror.Status.LastDeliveryID = deliveryID
+		mirror.Status.LastTriggeredAt = now.DeepCopy()
+		mirror.Status.LastJobName = existingJob.Name
+		mirror.Status.PendingResync = false
+		if revision != "" {
+			mirror.Status.LastRequestedRevision = revision
+		}
+		if err := controller.UpdateGitMirrorStatus(r.Context(), s.client, mirror); err != nil {
+			http.Error(w, "update status", http.StatusInternalServerError)
 			return
 		}
-		if existingJob != nil {
-			mirror.Status.ObservedGeneration = mirror.Generation
-			mirror.Status.LastWebhookAt = now.DeepCopy()
-			mirror.Status.LastDeliveryID = deliveryID
-			mirror.Status.LastTriggeredAt = now.DeepCopy()
-			mirror.Status.LastJobName = existingJob.Name
-			mirror.Status.PendingResync = false
-			if revision := gh.ExtractAfterRevision(body); revision != "" {
-				mirror.Status.LastMirroredRevision = revision
-			}
-			if err := controller.UpdateGitMirrorStatus(r.Context(), s.client, mirror); err != nil {
-				http.Error(w, "update status", http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusAccepted, map[string]string{"status": "scheduled"})
-			return
-		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "scheduled"})
+		return
 	}
 	active, err := s.activeJobExists(r.Context(), mirror)
 	if err != nil {
@@ -137,11 +140,16 @@ func (s *Server) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	createJob := controller.ApplyWebhookState(mirror, deliveryID, now, active)
-	if revision := gh.ExtractAfterRevision(body); revision != "" {
-		mirror.Status.LastMirroredRevision = revision
+	if revision != "" {
+		mirror.Status.LastRequestedRevision = revision
 	}
 	if createJob {
-		syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: s.defaultSyncImage, Scheme: s.scheme, TriggerID: deliveryID})
+		syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{
+			DefaultImage: s.defaultSyncImage,
+			Scheme:       s.scheme,
+			TriggerID:    deliveryID,
+			Revision:     revision,
+		})
 		if err != nil {
 			http.Error(w, "build job", http.StatusInternalServerError)
 			return

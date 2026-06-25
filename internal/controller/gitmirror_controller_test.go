@@ -69,7 +69,7 @@ var _ = Describe("GitMirror Controller", func() {
 							URL:          "git@codeberg.org:example/source-repo.git",
 							SSHSecretRef: mirrorv1alpha1.SecretKeyRef{Name: "target-key", Key: "ssh-privatekey"},
 						},
-						Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true, Prune: true},
+						Mirror: mirrorv1alpha1.MirrorSpec{Mode: "exact", IncludeTags: true},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

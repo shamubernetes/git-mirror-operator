@@ -58,13 +58,13 @@ type SecretKeyRef struct {
 }
 
 type MirrorSpec struct {
+	// Mode controls target ref behavior. exact mirrors all refs and prunes target refs that are absent
+	// from the source. additive pushes source heads and optionally tags without pruning target refs.
 	// +kubebuilder:validation:Enum=exact;additive
 	// +kubebuilder:default=exact
 	Mode string `json:"mode,omitempty"`
 	// +kubebuilder:default=true
 	IncludeTags bool `json:"includeTags,omitempty"`
-	// +kubebuilder:default=true
-	Prune bool `json:"prune,omitempty"`
 }
 
 type FallbackSpec struct {
@@ -84,16 +84,21 @@ type JobSpec struct {
 
 // GitMirrorStatus defines the observed state of GitMirror.
 type GitMirrorStatus struct {
-	ObservedGeneration   int64        `json:"observedGeneration,omitempty"`
-	LastWebhookAt        *metav1.Time `json:"lastWebhookAt,omitempty"`
-	LastDeliveryID       string       `json:"lastDeliveryID,omitempty"`
-	LastTriggeredAt      *metav1.Time `json:"lastTriggeredAt,omitempty"`
-	LastJobName          string       `json:"lastJobName,omitempty"`
+	ObservedGeneration int64        `json:"observedGeneration,omitempty"`
+	LastWebhookAt      *metav1.Time `json:"lastWebhookAt,omitempty"`
+	LastDeliveryID     string       `json:"lastDeliveryID,omitempty"`
+	LastTriggeredAt    *metav1.Time `json:"lastTriggeredAt,omitempty"`
+	LastJobName        string       `json:"lastJobName,omitempty"`
+	// LastCompletedJobName is the latest finished Job that has been reflected into status.
+	LastCompletedJobName string       `json:"lastCompletedJobName,omitempty"`
 	LastSuccessAt        *metav1.Time `json:"lastSuccessAt,omitempty"`
 	LastFailureAt        *metav1.Time `json:"lastFailureAt,omitempty"`
 	LastError            string       `json:"lastError,omitempty"`
-	LastMirroredRevision string       `json:"lastMirroredRevision,omitempty"`
-	PendingResync        bool         `json:"pendingResync,omitempty"`
+	// LastRequestedRevision is the latest GitHub push revision accepted by the webhook.
+	LastRequestedRevision string `json:"lastRequestedRevision,omitempty"`
+	// LastMirroredRevision is the latest requested revision whose sync Job completed successfully.
+	LastMirroredRevision string `json:"lastMirroredRevision,omitempty"`
+	PendingResync        bool   `json:"pendingResync,omitempty"`
 	// +patchMergeKey=type
 	// +patchStrategy=merge
 	// +listType=map

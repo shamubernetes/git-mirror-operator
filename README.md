@@ -29,7 +29,6 @@ Important spec fields:
 - `target.url`, `target.sshSecretRef.name`, `target.sshSecretRef.key`
 - `mirror.mode`: `exact` or `additive`
 - `mirror.includeTags`
-- `mirror.prune`
 - `fallback.schedule`: optional cron expression
 - `job.image`, `job.backoffLimit`, `job.activeDeadlineSeconds`, `job.ttlSecondsAfterFinished`, `job.resources`
 
@@ -48,8 +47,9 @@ https://<your-host>/webhooks/github
 ```
 
 Use content type `application/json`, enable push events, and configure the same secret in the `github.webhookSecretRef` Kubernetes Secret.
+Placeholder webhook and SSH key Secret manifests are included in `config/samples/mirror_v1alpha1_secrets.yaml`.
 
-Ping events are accepted without repository lookup. Push events require:
+Ping events are accepted without repository lookup. Unsupported GitHub event types are rejected. Push events require:
 
 - `X-GitHub-Event: push`
 - `X-GitHub-Delivery`
@@ -61,14 +61,14 @@ The default install creates the `git-mirror-sync` ServiceAccount used by sync Jo
 
 ## Sync Runner
 
-Exact mode mirrors all refs and uses:
+Exact mode mirrors all refs and prunes target refs that no longer exist at the source:
 
 ```bash
 git clone --mirror "$SOURCE_URL" /tmp/repo.git
 git -C /tmp/repo.git push --mirror "$TARGET_URL"
 ```
 
-Additive mode preserves target refs that no longer exist at the source.
+Additive mode preserves target refs that no longer exist at the source and never prunes.
 
 With tags:
 
@@ -83,6 +83,13 @@ Without tags:
 git clone --mirror "$SOURCE_URL" /tmp/repo.git
 git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 ```
+
+## Status Fields
+
+- `status.lastRequestedRevision`: latest GitHub push revision accepted by the webhook.
+- `status.lastMirroredRevision`: latest requested revision whose sync Job completed successfully.
+- `status.lastCompletedJobName`: latest finished Job reflected into status.
+- `status.pendingResync`: true when a push arrived while another sync Job was already active.
 
 ## Images
 

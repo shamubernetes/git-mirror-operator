@@ -166,13 +166,13 @@ spec:
                     type: boolean
                   mode:
                     default: exact
+                    description: |-
+                      Mode controls target ref behavior. exact mirrors all refs and prunes target refs that are absent
+                      from the source. additive pushes source heads and optionally tags without pruning target refs.
                     enum:
                     - exact
                     - additive
                     type: string
-                  prune:
-                    default: true
-                    type: boolean
                 type: object
               provider:
                 enum:
@@ -289,6 +289,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastCompletedJobName:
+                description: LastCompletedJobName is the latest finished Job that
+                  has been reflected into status.
+                type: string
               lastDeliveryID:
                 type: string
               lastError:
@@ -299,6 +303,12 @@ spec:
               lastJobName:
                 type: string
               lastMirroredRevision:
+                description: LastMirroredRevision is the latest requested revision
+                  whose sync Job completed successfully.
+                type: string
+              lastRequestedRevision:
+                description: LastRequestedRevision is the latest GitHub push revision
+                  accepted by the webhook.
                 type: string
               lastSuccessAt:
                 format: date-time

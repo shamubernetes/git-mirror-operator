@@ -23,6 +23,7 @@ const (
 	LabelDeliveryID     = "mirror.maude.dev/delivery-id"
 	LabelSourceOwner    = "mirror.maude.dev/source-owner"
 	LabelSourceRepo     = "mirror.maude.dev/source-repo"
+	AnnotationRevision  = "mirror.maude.dev/revision"
 	DefaultKnownHostsCM = "git-mirror-known-hosts"
 )
 
@@ -30,6 +31,7 @@ type Options struct {
 	DefaultImage string
 	Scheme       *runtime.Scheme
 	TriggerID    string
+	Revision     string
 }
 
 type SyncJob struct {
@@ -79,6 +81,10 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	if opts.TriggerID != "" {
 		labels[LabelDeliveryID] = SanitizeLabelValue(opts.TriggerID)
 	}
+	annotations := map[string]string{}
+	if opts.Revision != "" {
+		annotations[AnnotationRevision] = opts.Revision
+	}
 	knownHostsName := mirror.Spec.Job.KnownHostsConfigMapName
 	if knownHostsName == "" {
 		knownHostsName = DefaultKnownHostsCM
@@ -97,8 +103,9 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	runAsUser := int64(65532)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: mirror.Namespace,
-			Labels:    labels,
+			Namespace:   mirror.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
@@ -124,7 +131,6 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 							{Name: "TARGET_URL", Value: mirror.Spec.Target.URL},
 							{Name: "MIRROR_MODE", Value: mode},
 							{Name: "INCLUDE_TAGS", Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)},
-							{Name: "PRUNE", Value: strconv.FormatBool(mirror.Spec.Mirror.Prune)},
 							{Name: "SOURCE_SSH_KEY_PATH", Value: "/var/run/git-mirror/source/ssh_key"},
 							{Name: "TARGET_SSH_KEY_PATH", Value: "/var/run/git-mirror/target/ssh_key"},
 							{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"},

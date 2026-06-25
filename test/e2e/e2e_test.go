@@ -308,7 +308,6 @@ spec:
   mirror:
     mode: exact
     includeTags: true
-    prune: true
   job:
     image: %s
     activeDeadlineSeconds: 60
@@ -378,6 +377,16 @@ spec:
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "sync contract job logs should be available")
 			Expect(output).To(ContainSubstring("sync contract ok"))
+
+			By("verifying successful sync status records the mirrored revision")
+			verifyMirroredRevision := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitmirror", "source-repo", "-n", namespace,
+					"-o", "jsonpath={.status.lastMirroredRevision}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("abc123"))
+			}
+			Eventually(verifyMirroredRevision).Should(Succeed())
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks

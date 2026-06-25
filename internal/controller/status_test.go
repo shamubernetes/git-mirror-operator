@@ -6,6 +6,7 @@ import (
 
 	mirrorv1alpha1 "github.com/shamubernetes/git-mirror-operator/api/v1alpha1"
 	"github.com/shamubernetes/git-mirror-operator/internal/controller"
+	"github.com/shamubernetes/git-mirror-operator/internal/jobs"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,7 +34,10 @@ func TestApplySuccessfulJobStatusRecordsSuccessAndFollowup(t *testing.T) {
 	mirror := &mirrorv1alpha1.GitMirror{}
 	mirror.Status.PendingResync = true
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "mirror-job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "mirror-job",
+			Annotations: map[string]string{jobs.AnnotationRevision: "abc123"},
+		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 			Type:   batchv1.JobComplete,
 			Status: corev1.ConditionTrue,
@@ -51,6 +55,12 @@ func TestApplySuccessfulJobStatusRecordsSuccessAndFollowup(t *testing.T) {
 	if mirror.Status.LastError != "" {
 		t.Fatalf("expected last error cleared, got %q", mirror.Status.LastError)
 	}
+	if mirror.Status.LastCompletedJobName != "mirror-job" {
+		t.Fatalf("expected completed job recorded, got %q", mirror.Status.LastCompletedJobName)
+	}
+	if mirror.Status.LastMirroredRevision != "abc123" {
+		t.Fatalf("expected mirrored revision recorded after success, got %q", mirror.Status.LastMirroredRevision)
+	}
 	if mirror.Status.PendingResync {
 		t.Fatal("expected pending resync cleared")
 	}
@@ -59,8 +69,12 @@ func TestApplySuccessfulJobStatusRecordsSuccessAndFollowup(t *testing.T) {
 func TestApplyFailedJobStatusRecordsFailure(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC))
 	mirror := &mirrorv1alpha1.GitMirror{}
+	mirror.Status.LastMirroredRevision = "previous"
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "mirror-job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "mirror-job",
+			Annotations: map[string]string{jobs.AnnotationRevision: "abc123"},
+		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 			Type:    batchv1.JobFailed,
 			Status:  corev1.ConditionTrue,
@@ -79,5 +93,11 @@ func TestApplyFailedJobStatusRecordsFailure(t *testing.T) {
 	}
 	if mirror.Status.LastError == "" {
 		t.Fatal("expected failure error message")
+	}
+	if mirror.Status.LastCompletedJobName != "mirror-job" {
+		t.Fatalf("expected completed job recorded, got %q", mirror.Status.LastCompletedJobName)
+	}
+	if mirror.Status.LastMirroredRevision != "previous" {
+		t.Fatalf("expected failed job not to advance mirrored revision, got %q", mirror.Status.LastMirroredRevision)
 	}
 }

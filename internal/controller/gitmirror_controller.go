@@ -60,7 +60,10 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	now := metav1.NewTime(r.now())
 	for i := range jobList.Items {
 		job := &jobList.Items[i]
-		if !JobFinished(job) || mirror.Status.LastJobName == job.Name {
+		if !JobFinished(job) || mirror.Status.LastCompletedJobName == job.Name {
+			continue
+		}
+		if mirror.Status.LastJobName != "" && mirror.Status.LastJobName != job.Name {
 			continue
 		}
 		followup := ApplyCompletedJobStatus(&mirror, job, now)
@@ -68,7 +71,7 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 		if followup {
-			if err := r.createSyncJob(ctx, &mirror, "resync-"+now.Format(time.RFC3339Nano)); err != nil && !apierrors.IsAlreadyExists(err) {
+			if err := r.createSyncJob(ctx, &mirror, "resync-"+now.Format(time.RFC3339Nano), mirror.Status.LastRequestedRevision); err != nil && !apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{}, err
 			}
 			if err := UpdateGitMirrorStatus(ctx, r.Client, &mirror); err != nil {
@@ -93,7 +96,7 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			create := ApplyWebhookState(&mirror, "scheduled", now, active)
 			if create {
-				if err := r.createSyncJob(ctx, &mirror, "scheduled-"+now.Format(time.RFC3339Nano)); err != nil {
+				if err := r.createSyncJob(ctx, &mirror, "scheduled-"+now.Format(time.RFC3339Nano), ""); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
@@ -108,8 +111,13 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (r *GitMirrorReconciler) createSyncJob(ctx context.Context, mirror *mirrorv1alpha1.GitMirror, triggerID string) error {
-	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: r.DefaultSyncImage, Scheme: r.Scheme, TriggerID: triggerID})
+func (r *GitMirrorReconciler) createSyncJob(ctx context.Context, mirror *mirrorv1alpha1.GitMirror, triggerID, revision string) error {
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{
+		DefaultImage: r.DefaultSyncImage,
+		Scheme:       r.Scheme,
+		TriggerID:    triggerID,
+		Revision:     revision,
+	})
 	if err != nil {
 		return err
 	}
