@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -271,8 +272,15 @@ type httpServer struct {
 	server  *http.Server
 }
 
+const (
+	webhookReadHeaderTimeout = 5 * time.Second
+	webhookReadTimeout       = 15 * time.Second
+	webhookWriteTimeout      = 15 * time.Second
+	webhookIdleTimeout       = 60 * time.Second
+)
+
 func (s *httpServer) Start(ctx context.Context) error {
-	s.server = &http.Server{Addr: s.addr, Handler: s.handler}
+	s.server = s.newServer()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.server.ListenAndServe()
@@ -285,6 +293,17 @@ func (s *httpServer) Start(ctx context.Context) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func (s *httpServer) newServer() *http.Server {
+	return &http.Server{
+		Addr:              s.addr,
+		Handler:           s.handler,
+		ReadHeaderTimeout: webhookReadHeaderTimeout,
+		ReadTimeout:       webhookReadTimeout,
+		WriteTimeout:      webhookWriteTimeout,
+		IdleTimeout:       webhookIdleTimeout,
 	}
 }
 
