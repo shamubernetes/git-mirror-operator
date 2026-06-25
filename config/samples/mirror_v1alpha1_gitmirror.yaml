@@ -14,19 +14,32 @@ spec:
       name: source-repo-github-webhook
       key: secret
   source:
-    url: git@github.com:example/source-repo.git
-    sshSecretRef:
-      name: source-repo-source-ssh
-      key: ssh-privatekey
+    url: https://github.com/example/source-repo.git
+    auth:
+      type: githubApp
+      githubApp:
+        appIDSecretRef:
+          name: source-repo-github-app
+          key: app-id
+        installationIDSecretRef:
+          name: source-repo-github-app
+          key: installation-id
+        privateKeySecretRef:
+          name: source-repo-github-app
+          key: private-key.pem
   target:
-    url: git@codeberg.org:example/source-repo.git
-    sshSecretRef:
-      name: source-repo-target-ssh
-      key: ssh-privatekey
+    url: https://codeberg.org/example/source-repo.git
+    auth:
+      type: basic
+      basic:
+        usernameSecretRef:
+          name: source-repo-target-basic
+          key: username
+        passwordSecretRef:
+          name: source-repo-target-basic
+          key: password
   mirror:
     mode: exact
-    includeTags: true
-    prune: true
   fallback:
     schedule: "0 */6 * * *"
   job:

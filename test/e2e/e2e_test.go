@@ -21,6 +21,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/shamubernetes/git-mirror-operator/test/utils"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // namespace where the project is deployed in
@@ -52,6 +55,7 @@ const metricsRoleBindingName = "git-mirror-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
+	skipTeardown := os.Getenv("E2E_SKIP_TEARDOWN") == "true"
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
@@ -82,6 +86,11 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		if skipTeardown {
+			_, _ = fmt.Fprintln(GinkgoWriter, "Skipping e2e teardown because E2E_SKIP_TEARDOWN=true")
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
@@ -301,8 +310,6 @@ spec:
       key: ssh-privatekey
   mirror:
     mode: exact
-    includeTags: true
-    prune: true
   job:
     image: %s
     activeDeadlineSeconds: 60
@@ -372,6 +379,161 @@ spec:
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "sync contract job logs should be available")
 			Expect(output).To(ContainSubstring("sync contract ok"))
+
+			By("verifying successful sync status records the mirrored revision")
+			verifyMirroredRevision := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitmirror", "source-repo", "-n", namespace,
+					"-o", "jsonpath={.status.lastMirroredRevision}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("abc123"))
+			}
+			Eventually(verifyMirroredRevision).Should(Succeed())
+
+			By("creating modern auth sync job prerequisites")
+			commands = []*exec.Cmd{
+				exec.Command("kubectl", "create", "secret", "generic", "source-repo-modern-github-webhook",
+					"-n", namespace, "--from-literal=secret=webhook-secret-modern"),
+				exec.Command("kubectl", "create", "secret", "generic", "source-repo-modern-github-app",
+					"-n", namespace,
+					"--from-literal=app-id=12345",
+					"--from-literal=installation-id=67890",
+					"--from-literal=private-key.pem=dummy-github-app-private-key"),
+				exec.Command("kubectl", "create", "secret", "generic", "source-repo-modern-target-basic",
+					"-n", namespace,
+					"--from-literal=username=mirror-user",
+					"--from-literal=password=mirror-token"),
+			}
+			for _, cmd := range commands {
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("creating a GitMirror resource with GitHub App source auth and basic target auth")
+			applyManifest(fmt.Sprintf(`
+apiVersion: mirror.maude.dev/v1alpha1
+kind: GitMirror
+metadata:
+  name: source-repo-modern
+  namespace: %s
+spec:
+  provider: github
+  github:
+    owner: example
+    repo: source-repo-modern
+    webhookSecretRef:
+      name: source-repo-modern-github-webhook
+      key: secret
+  source:
+    url: https://github.com/example/source-repo-modern.git
+    auth:
+      type: githubApp
+      githubApp:
+        appIDSecretRef:
+          name: source-repo-modern-github-app
+          key: app-id
+        installationIDSecretRef:
+          name: source-repo-modern-github-app
+          key: installation-id
+        privateKeySecretRef:
+          name: source-repo-modern-github-app
+          key: private-key.pem
+        apiURL: https://github.example.com/api/v3
+  target:
+    url: https://codeberg.org/example/source-repo-modern.git
+    auth:
+      type: basic
+      basic:
+        usernameSecretRef:
+          name: source-repo-modern-target-basic
+          key: username
+        passwordSecretRef:
+          name: source-repo-modern-target-basic
+          key: password
+  mirror:
+    mode: exact
+  job:
+    image: %s
+    activeDeadlineSeconds: 60
+    ttlSecondsAfterFinished: 60
+`, namespace, syncContractImage))
+
+			By("sending a signed GitHub push event for the modern auth mirror")
+			modernPayload := []byte(`{"repository":{"full_name":"example/source-repo-modern"},"after":"def456"}`)
+			sendModernWebhook := func(g Gomega) {
+				req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18082/webhooks/github", bytes.NewReader(modernPayload))
+				g.Expect(err).NotTo(HaveOccurred())
+				req.Header.Set("X-GitHub-Event", "push")
+				req.Header.Set("X-GitHub-Delivery", "delivery-e2e-2")
+				req.Header.Set("X-Hub-Signature-256", webhookSignature(modernPayload, "webhook-secret-modern"))
+
+				resp, err := webhookClient.Do(req)
+				g.Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					_ = resp.Body.Close()
+				}()
+				body, err := io.ReadAll(resp.Body)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(resp.StatusCode).To(Equal(http.StatusAccepted), string(body))
+			}
+			Eventually(sendModernWebhook).Should(Succeed())
+
+			By("verifying a modern auth sync Job was created and recorded in status")
+			var modernJobName string
+			verifyModernJob := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "jobs", "-n", namespace,
+					"-l", "mirror.maude.dev/gitmirror=source-repo-modern",
+					"-o", "jsonpath={.items[*].metadata.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				names := strings.Fields(output)
+				g.Expect(names).To(HaveLen(1))
+				modernJobName = names[0]
+
+				cmd = exec.Command("kubectl", "get", "gitmirror", "source-repo-modern", "-n", namespace,
+					"-o", "jsonpath={.status.lastJobName}")
+				output, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal(modernJobName))
+			}
+			Eventually(verifyModernJob).Should(Succeed())
+
+			By("verifying the generated modern auth Job contract")
+			modernJob := getJob(modernJobName)
+			modernSync := syncContainer(modernJob)
+			expectEnvValue(modernSync, "SOURCE_AUTH_TYPE", "githubApp")
+			expectEnvValue(modernSync, "SOURCE_GITHUB_APP_PRIVATE_KEY_PATH", "/var/run/git-mirror/source-github-app/private_key")
+			expectEnvValue(modernSync, "SOURCE_GITHUB_APP_API_URL", "https://github.example.com/api/v3")
+			expectSecretEnvVar(modernSync, "SOURCE_GITHUB_APP_ID", "source-repo-modern-github-app", "app-id")
+			expectSecretEnvVar(modernSync, "SOURCE_GITHUB_APP_INSTALLATION_ID", "source-repo-modern-github-app", "installation-id")
+			expectVolumeMount(modernSync, "source-github-app-private-key", "/var/run/git-mirror/source-github-app/private_key", "private-key.pem")
+			expectSecretVolume(modernJob, "source-github-app-private-key", "source-repo-modern-github-app", "private-key.pem")
+			expectEnvAbsent(modernSync, "SOURCE_SSH_KEY_PATH")
+			expectEnvValue(modernSync, "TARGET_AUTH_TYPE", "basic")
+			expectSecretEnvVar(modernSync, "TARGET_AUTH_USERNAME", "source-repo-modern-target-basic", "username")
+			expectSecretEnvVar(modernSync, "TARGET_AUTH_PASSWORD", "source-repo-modern-target-basic", "password")
+			expectEnvAbsent(modernSync, "TARGET_SSH_KEY_PATH")
+
+			By("verifying the modern auth sync Job completed its runner contract")
+			cmd = exec.Command("kubectl", "wait", "job/"+modernJobName,
+				"--for=condition=complete", "-n", namespace, "--timeout=2m")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "modern auth sync contract job should complete")
+
+			cmd = exec.Command("kubectl", "logs", "job/"+modernJobName, "-n", namespace)
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "modern auth sync contract job logs should be available")
+			Expect(output).To(ContainSubstring("sync contract ok"))
+
+			By("verifying successful modern auth sync status records the mirrored revision")
+			verifyModernMirroredRevision := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitmirror", "source-repo-modern", "-n", namespace,
+					"-o", "jsonpath={.status.lastMirroredRevision}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("def456"))
+			}
+			Eventually(verifyModernMirroredRevision).Should(Succeed())
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
@@ -397,6 +559,87 @@ func applyManifest(manifest string) {
 	cmd := exec.Command("kubectl", "apply", "-f", file.Name())
 	_, err = utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred())
+}
+
+func getJob(name string) batchv1.Job {
+	cmd := exec.Command("kubectl", "get", "job", name, "-n", namespace, "-o", "json")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "sync Job should be available")
+
+	var job batchv1.Job
+	Expect(json.Unmarshal([]byte(output), &job)).To(Succeed(), "sync Job JSON should decode")
+	return job
+}
+
+func syncContainer(job batchv1.Job) corev1.Container {
+	for _, container := range job.Spec.Template.Spec.Containers {
+		if container.Name == "sync" {
+			return container
+		}
+	}
+	Fail("sync Job should include a sync container")
+	return corev1.Container{}
+}
+
+func expectEnvValue(container corev1.Container, name, want string) {
+	env := envVar(container, name)
+	Expect(env).NotTo(BeNil(), "expected env %s", name)
+	Expect(env.Value).To(Equal(want), "unexpected env value for %s", name)
+	Expect(env.ValueFrom).To(BeNil(), "expected %s to use a literal value", name)
+}
+
+func expectSecretEnvVar(container corev1.Container, name, secretName, key string) {
+	env := envVar(container, name)
+	Expect(env).NotTo(BeNil(), "expected env %s", name)
+	Expect(env.Value).To(BeEmpty(), "expected %s to come from a secret", name)
+	Expect(env.ValueFrom).NotTo(BeNil(), "expected %s to come from a secret", name)
+	Expect(env.ValueFrom.SecretKeyRef).NotTo(BeNil(), "expected %s to reference a secret key", name)
+	Expect(env.ValueFrom.SecretKeyRef.Name).To(Equal(secretName), "unexpected secret name for %s", name)
+	Expect(env.ValueFrom.SecretKeyRef.Key).To(Equal(key), "unexpected secret key for %s", name)
+}
+
+func expectEnvAbsent(container corev1.Container, name string) {
+	Expect(envVar(container, name)).To(BeNil(), "expected env %s to be absent", name)
+}
+
+func envVar(container corev1.Container, name string) *corev1.EnvVar {
+	for i := range container.Env {
+		if container.Env[i].Name == name {
+			return &container.Env[i]
+		}
+	}
+	return nil
+}
+
+func expectVolumeMount(container corev1.Container, name, mountPath, subPath string) {
+	for _, mount := range container.VolumeMounts {
+		if mount.Name != name {
+			continue
+		}
+		Expect(mount.MountPath).To(Equal(mountPath), "unexpected mount path for %s", name)
+		Expect(mount.SubPath).To(Equal(subPath), "unexpected subPath for %s", name)
+		Expect(mount.ReadOnly).To(BeTrue(), "expected %s to be mounted read-only", name)
+		return
+	}
+	Fail(fmt.Sprintf("expected volume mount %s", name))
+}
+
+func expectSecretVolume(job batchv1.Job, name, secretName, key string) {
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name != name {
+			continue
+		}
+		Expect(volume.Secret).NotTo(BeNil(), "expected %s to be a secret volume", name)
+		Expect(volume.Secret.SecretName).To(Equal(secretName), "unexpected secret name for volume %s", name)
+		for _, item := range volume.Secret.Items {
+			if item.Key == key {
+				Expect(item.Path).To(Equal(key), "unexpected secret item path for volume %s", name)
+				return
+			}
+		}
+		Fail(fmt.Sprintf("expected secret key %s in volume %s", key, name))
+	}
+	Fail(fmt.Sprintf("expected secret volume %s", name))
 }
 
 // getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	mirrorv1alpha1 "github.com/shamubernetes/git-mirror-operator/api/v1alpha1"
+	"github.com/shamubernetes/git-mirror-operator/internal/jobs"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -26,11 +27,33 @@ func ApplyWebhookState(mirror *mirrorv1alpha1.GitMirror, deliveryID string, now 
 	return true
 }
 
+func ApplyWebhookIntent(mirror *mirrorv1alpha1.GitMirror, deliveryID, revision string, now metav1.Time) {
+	mirror.Status.ObservedGeneration = mirror.Generation
+	mirror.Status.LastWebhookAt = now.DeepCopy()
+	mirror.Status.LastDeliveryID = deliveryID
+	if revision != "" {
+		mirror.Status.LastRequestedRevision = revision
+	}
+	mirror.Status.PendingResync = true
+	setCondition(mirror, "SyncPending", metav1.ConditionTrue, "WebhookReceived", "Webhook recorded and waiting for the reconciler to schedule a sync job")
+}
+
+func ApplySyncScheduled(mirror *mirrorv1alpha1.GitMirror, jobName string, now metav1.Time) {
+	mirror.Status.LastTriggeredAt = now.DeepCopy()
+	mirror.Status.LastJobName = jobName
+	mirror.Status.PendingResync = false
+	setCondition(mirror, "SyncPending", metav1.ConditionFalse, "JobScheduled", "Sync job scheduled")
+}
+
 func ApplyCompletedJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, now metav1.Time) bool {
 	mirror.Status.LastJobName = job.Name
+	mirror.Status.LastCompletedJobName = job.Name
 	if isJobComplete(job) {
 		mirror.Status.LastSuccessAt = now.DeepCopy()
 		mirror.Status.LastError = ""
+		if revision := job.Annotations[jobs.AnnotationRevision]; revision != "" {
+			mirror.Status.LastMirroredRevision = revision
+		}
 		setCondition(mirror, "Ready", metav1.ConditionTrue, "SyncSucceeded", "Last sync job completed successfully")
 	} else if failed, reason := isJobFailed(job); failed {
 		mirror.Status.LastFailureAt = now.DeepCopy()
