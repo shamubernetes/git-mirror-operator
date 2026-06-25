@@ -59,7 +59,7 @@ Ping events are accepted without repository lookup. Unsupported GitHub event typ
 
 ## Sync Job Prerequisites
 
-The default install creates the `git-mirror-sync` ServiceAccount used by sync Jobs without extra RBAC permissions. It also creates a `git-mirror-known-hosts` ConfigMap template with the `known_hosts` key expected by the sync runner. Populate that ConfigMap with verified SSH host keys for the Git hosts you mirror before running sync Jobs.
+The default install creates the `git-mirror-sync` ServiceAccount used by sync Jobs without extra RBAC permissions. It also creates a `git-mirror-known-hosts` ConfigMap with verified `known_hosts` entries for GitHub.com, GitLab.com, Bitbucket Cloud, and Codeberg.org. Extend or override that ConfigMap in your GitOps overlay for any additional Git hosts you mirror.
 
 ## Sync Runner
 
