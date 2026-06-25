@@ -40,6 +40,8 @@ make docker-build IMG=ghcr.io/shamubernetes/git-mirror-operator:dev
 make docker-build-sync SYNC_IMG=ghcr.io/shamubernetes/git-mirror-sync:dev
 ```
 
+CI uses the Blacksmith free-tier runner label `blacksmith-2vcpu-ubuntu-2404`.
+
 ## Pull Requests
 
 Keep PRs focused. Include the behavior change, relevant tests, and any manifest or documentation updates needed by GitOps users.
