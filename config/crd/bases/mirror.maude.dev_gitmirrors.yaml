@@ -163,16 +163,18 @@ spec:
                 properties:
                   includeTags:
                     default: true
+                    description: IncludeTags applies only when mode is additive. Exact
+                      mode mirrors all refs, including tags.
                     type: boolean
                   mode:
                     default: exact
+                    description: |-
+                      Mode controls target ref behavior. exact mirrors all refs and prunes target refs that are absent
+                      from the source. additive pushes source heads and optionally tags without pruning target refs.
                     enum:
                     - exact
                     - additive
                     type: string
-                  prune:
-                    default: true
-                    type: boolean
                 type: object
               provider:
                 enum:
@@ -180,7 +182,130 @@ spec:
                 type: string
               source:
                 properties:
+                  auth:
+                    properties:
+                      basic:
+                        properties:
+                          passwordSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          usernameSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - passwordSecretRef
+                        - usernameSecretRef
+                        type: object
+                      githubApp:
+                        properties:
+                          apiURL:
+                            description: APIURL defaults to https://api.github.com.
+                              Set this for GitHub Enterprise Server.
+                            pattern: ^https://.*
+                            type: string
+                          appIDSecretRef:
+                            description: AppIDSecretRef references the GitHub App
+                              client ID or app ID used as the JWT issuer.
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          installationIDSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          privateKeySecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - appIDSecretRef
+                        - installationIDSecretRef
+                        - privateKeySecretRef
+                        type: object
+                      ssh:
+                        properties:
+                          privateKeyRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - privateKeyRef
+                        type: object
+                      type:
+                        enum:
+                        - ssh
+                        - basic
+                        - githubApp
+                        type: string
+                    required:
+                    - type
+                    type: object
+                    x-kubernetes-validations:
+                    - message: auth.type ssh requires auth.ssh
+                      rule: self.type != 'ssh' || has(self.ssh)
+                    - message: auth.type basic requires auth.basic
+                      rule: self.type != 'basic' || has(self.basic)
+                    - message: auth.type githubApp requires auth.githubApp
+                      rule: self.type != 'githubApp' || has(self.githubApp)
+                    - message: auth.ssh is only valid with auth.type ssh
+                      rule: self.type == 'ssh' || !has(self.ssh)
+                    - message: auth.basic is only valid with auth.type basic
+                      rule: self.type == 'basic' || !has(self.basic)
+                    - message: auth.githubApp is only valid with auth.type githubApp
+                      rule: self.type == 'githubApp' || !has(self.githubApp)
                   sshSecretRef:
+                    description: SSHSecretRef is the legacy SSH private key reference.
+                      Prefer auth.type=ssh for new manifests.
                     properties:
                       key:
                         minLength: 1
@@ -196,12 +321,137 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - sshSecretRef
                 - url
                 type: object
+                x-kubernetes-validations:
+                - message: auth or sshSecretRef is required
+                  rule: has(self.auth) || has(self.sshSecretRef)
               target:
                 properties:
+                  auth:
+                    properties:
+                      basic:
+                        properties:
+                          passwordSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          usernameSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - passwordSecretRef
+                        - usernameSecretRef
+                        type: object
+                      githubApp:
+                        properties:
+                          apiURL:
+                            description: APIURL defaults to https://api.github.com.
+                              Set this for GitHub Enterprise Server.
+                            pattern: ^https://.*
+                            type: string
+                          appIDSecretRef:
+                            description: AppIDSecretRef references the GitHub App
+                              client ID or app ID used as the JWT issuer.
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          installationIDSecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          privateKeySecretRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - appIDSecretRef
+                        - installationIDSecretRef
+                        - privateKeySecretRef
+                        type: object
+                      ssh:
+                        properties:
+                          privateKeyRef:
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - privateKeyRef
+                        type: object
+                      type:
+                        enum:
+                        - ssh
+                        - basic
+                        - githubApp
+                        type: string
+                    required:
+                    - type
+                    type: object
+                    x-kubernetes-validations:
+                    - message: auth.type ssh requires auth.ssh
+                      rule: self.type != 'ssh' || has(self.ssh)
+                    - message: auth.type basic requires auth.basic
+                      rule: self.type != 'basic' || has(self.basic)
+                    - message: auth.type githubApp requires auth.githubApp
+                      rule: self.type != 'githubApp' || has(self.githubApp)
+                    - message: auth.ssh is only valid with auth.type ssh
+                      rule: self.type == 'ssh' || !has(self.ssh)
+                    - message: auth.basic is only valid with auth.type basic
+                      rule: self.type == 'basic' || !has(self.basic)
+                    - message: auth.githubApp is only valid with auth.type githubApp
+                      rule: self.type == 'githubApp' || !has(self.githubApp)
                   sshSecretRef:
+                    description: SSHSecretRef is the legacy SSH private key reference.
+                      Prefer auth.type=ssh for new manifests.
                     properties:
                       key:
                         minLength: 1
@@ -217,9 +467,11 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - sshSecretRef
                 - url
                 type: object
+                x-kubernetes-validations:
+                - message: auth or sshSecretRef is required
+                  rule: has(self.auth) || has(self.sshSecretRef)
             required:
             - github
             - mirror
@@ -289,6 +541,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastCompletedJobName:
+                description: LastCompletedJobName is the latest finished Job that
+                  has been reflected into status.
+                type: string
               lastDeliveryID:
                 type: string
               lastError:
@@ -299,6 +555,12 @@ spec:
               lastJobName:
                 type: string
               lastMirroredRevision:
+                description: LastMirroredRevision is the latest requested revision
+                  whose sync Job completed successfully.
+                type: string
+              lastRequestedRevision:
+                description: LastRequestedRevision is the latest GitHub push revision
+                  accepted by the webhook.
                 type: string
               lastSuccessAt:
                 format: date-time
