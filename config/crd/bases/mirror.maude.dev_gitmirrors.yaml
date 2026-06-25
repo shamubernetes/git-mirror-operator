@@ -163,6 +163,8 @@ spec:
                 properties:
                   includeTags:
                     default: true
+                    description: IncludeTags applies only when mode is additive. Exact
+                      mode mirrors all refs, including tags.
                     type: boolean
                   mode:
                     default: exact

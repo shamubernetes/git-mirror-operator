@@ -307,7 +307,6 @@ spec:
       key: ssh-privatekey
   mirror:
     mode: exact
-    includeTags: true
   job:
     image: %s
     activeDeadlineSeconds: 60

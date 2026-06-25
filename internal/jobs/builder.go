@@ -84,6 +84,20 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	if opts.TriggerID != "" {
 		labels[LabelDeliveryID] = SanitizeLabelValue(opts.TriggerID)
 	}
+	env := []corev1.EnvVar{
+		{Name: "SOURCE_URL", Value: mirror.Spec.Source.URL},
+		{Name: "TARGET_URL", Value: mirror.Spec.Target.URL},
+		{Name: "MIRROR_MODE", Value: mode},
+	}
+	if mode == "additive" {
+		env = append(env, corev1.EnvVar{Name: "INCLUDE_TAGS", Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)})
+	}
+	env = append(env,
+		corev1.EnvVar{Name: "SOURCE_SSH_KEY_PATH", Value: "/var/run/git-mirror/source/ssh_key"},
+		corev1.EnvVar{Name: "TARGET_SSH_KEY_PATH", Value: "/var/run/git-mirror/target/ssh_key"},
+		corev1.EnvVar{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"},
+		corev1.EnvVar{Name: "HOME", Value: "/tmp"},
+	)
 	annotations := map[string]string{}
 	for key, value := range AnnotationsForMirror(mirror) {
 		annotations[key] = value
@@ -132,17 +146,8 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 						Name:            "sync",
 						Image:           image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Env: []corev1.EnvVar{
-							{Name: "SOURCE_URL", Value: mirror.Spec.Source.URL},
-							{Name: "TARGET_URL", Value: mirror.Spec.Target.URL},
-							{Name: "MIRROR_MODE", Value: mode},
-							{Name: "INCLUDE_TAGS", Value: strconv.FormatBool(mirror.Spec.Mirror.IncludeTags)},
-							{Name: "SOURCE_SSH_KEY_PATH", Value: "/var/run/git-mirror/source/ssh_key"},
-							{Name: "TARGET_SSH_KEY_PATH", Value: "/var/run/git-mirror/target/ssh_key"},
-							{Name: "KNOWN_HOSTS_PATH", Value: "/var/run/git-mirror/known-hosts/known_hosts"},
-							{Name: "HOME", Value: "/tmp"},
-						},
-						Resources: resources,
+						Env:             env,
+						Resources:       resources,
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 							ReadOnlyRootFilesystem:   &readOnly,

@@ -69,8 +69,8 @@ func TestBuildSyncJobForExactMode(t *testing.T) {
 	if got := envValue(t, syncJob.Job.Name, envs, "MIRROR_MODE"); got != "exact" {
 		t.Fatalf("expected exact mode, got %q", got)
 	}
-	if got := envValue(t, syncJob.Job.Name, envs, "INCLUDE_TAGS"); got != "true" {
-		t.Fatalf("expected include tags true, got %q", got)
+	if hasEnv(syncJob, "INCLUDE_TAGS") {
+		t.Fatal("did not expect INCLUDE_TAGS env in exact mode; exact mode mirrors all refs including tags")
 	}
 	if hasEnv(syncJob, "PRUNE") {
 		t.Fatal("did not expect PRUNE env; exact mode always prunes and additive mode never prunes")

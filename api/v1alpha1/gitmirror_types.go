@@ -63,6 +63,7 @@ type MirrorSpec struct {
 	// +kubebuilder:validation:Enum=exact;additive
 	// +kubebuilder:default=exact
 	Mode string `json:"mode,omitempty"`
+	// IncludeTags applies only when mode is additive. Exact mode mirrors all refs, including tags.
 	// +kubebuilder:default=true
 	IncludeTags bool `json:"includeTags,omitempty"`
 }
