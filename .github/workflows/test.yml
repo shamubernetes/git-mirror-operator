@@ -21,3 +21,4 @@ jobs:
         run: |
           go mod tidy
           make test
+          make check-generated-drift

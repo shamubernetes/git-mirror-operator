@@ -21,13 +21,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,6 +43,9 @@ const serviceAccountName = "git-mirror-operator-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
 const metricsServiceName = "git-mirror-operator-controller-manager-metrics-service"
+
+// githubWebhookServiceName is the service exposing the GitHub webhook endpoint.
+const githubWebhookServiceName = "git-mirror-operator-github-webhook-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "git-mirror-operator-metrics-binding"
@@ -191,11 +192,6 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
 
-			By("getting the service account token")
-			token, err := serviceAccountToken()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(token).NotTo(BeEmpty())
-
 			By("waiting for the metrics endpoint to be ready")
 			verifyMetricsEndpointReady := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", namespace)
@@ -226,7 +222,7 @@ var _ = Describe("Manager", Ordered, func() {
 							"name": "curl",
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
-							"args": ["curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics"],
+							"args": ["TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); curl --fail --show-error --silent --insecure -H \"Authorization: Bearer ${TOKEN}\" https://%s.%s.svc.cluster.local:8443/metrics"],
 							"securityContext": {
 								"allowPrivilegeEscalation": false,
 								"capabilities": {
@@ -241,7 +237,7 @@ var _ = Describe("Manager", Ordered, func() {
 						}],
 						"serviceAccount": "%s"
 					}
-				}`, token, metricsServiceName, namespace, serviceAccountName))
+				}`, metricsServiceName, namespace, serviceAccountName))
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
 
@@ -266,15 +262,12 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should schedule a sync Job from a signed GitHub push webhook", func() {
 			By("creating sync job prerequisites")
 			commands := []*exec.Cmd{
-				exec.Command("kubectl", "create", "serviceaccount", "git-mirror-sync", "-n", namespace),
 				exec.Command("kubectl", "create", "secret", "generic", "source-repo-github-webhook",
 					"-n", namespace, "--from-literal=secret=webhook-secret"),
 				exec.Command("kubectl", "create", "secret", "generic", "source-repo-source-ssh",
 					"-n", namespace, "--from-literal=ssh-privatekey=dummy-source-key"),
 				exec.Command("kubectl", "create", "secret", "generic", "source-repo-target-ssh",
 					"-n", namespace, "--from-literal=ssh-privatekey=dummy-target-key"),
-				exec.Command("kubectl", "create", "configmap", "git-mirror-known-hosts",
-					"-n", namespace, "--from-literal=known_hosts=github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"),
 			}
 			for _, cmd := range commands {
 				_, err := utils.Run(cmd)
@@ -311,12 +304,13 @@ spec:
     includeTags: true
     prune: true
   job:
-    image: alpine:3.22
+    image: %s
+    activeDeadlineSeconds: 60
     ttlSecondsAfterFinished: 60
-`, namespace))
+`, namespace, syncContractImage))
 
 			By("port-forwarding the GitHub webhook endpoint")
-			portForward := exec.Command("kubectl", "port-forward", "pod/"+controllerPodName, "18082:8082", "-n", namespace)
+			portForward := exec.Command("kubectl", "port-forward", "service/"+githubWebhookServiceName, "18082:8082", "-n", namespace)
 			portForward.Stdout = GinkgoWriter
 			portForward.Stderr = GinkgoWriter
 			Expect(portForward.Start()).To(Succeed())
@@ -367,6 +361,17 @@ spec:
 				g.Expect(output).To(Equal(jobName))
 			}
 			Eventually(verifyJob).Should(Succeed())
+
+			By("verifying the sync Job completed its runner contract")
+			cmd := exec.Command("kubectl", "wait", "job/"+jobName,
+				"--for=condition=complete", "-n", namespace, "--timeout=2m")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "sync contract job should complete")
+
+			cmd = exec.Command("kubectl", "logs", "job/"+jobName, "-n", namespace)
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "sync contract job logs should be available")
+			Expect(output).To(ContainSubstring("sync contract ok"))
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
@@ -394,61 +399,11 @@ func applyManifest(manifest string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
-func serviceAccountToken() (string, error) {
-	const tokenRequestRawString = `{
-		"apiVersion": "authentication.k8s.io/v1",
-		"kind": "TokenRequest"
-	}`
-
-	// Temporary file to store the token request
-	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
-	tokenRequestFile := filepath.Join("/tmp", secretName)
-	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
-	if err != nil {
-		return "", err
-	}
-
-	var out string
-	verifyTokenCreation := func(g Gomega) {
-		// Execute kubectl command to create the token
-		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
-			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
-			namespace,
-			serviceAccountName,
-		), "-f", tokenRequestFile)
-
-		output, err := cmd.CombinedOutput()
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Parse the JSON output to extract the token
-		var token tokenRequest
-		err = json.Unmarshal(output, &token)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		out = token.Status.Token
-	}
-	Eventually(verifyTokenCreation).Should(Succeed())
-
-	return out, err
-}
-
 // getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
 func getMetricsOutput() string {
 	By("getting the curl-metrics logs")
 	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
 	metricsOutput, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
 	return metricsOutput
-}
-
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
-type tokenRequest struct {
-	Status struct {
-		Token string `json:"token"`
-	} `json:"status"`
 }

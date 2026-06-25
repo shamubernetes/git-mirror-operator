@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: git-mirror-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: github-webhook-service
+  namespace: system
+spec:
+  ports:
+  - name: github-webhook
+    port: 8082
+    protocol: TCP
+    targetPort: github-webhook
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: git-mirror-operator

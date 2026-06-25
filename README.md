@@ -55,6 +55,10 @@ Ping events are accepted without repository lookup. Push events require:
 - `X-GitHub-Delivery`
 - `X-Hub-Signature-256`
 
+## Sync Job Prerequisites
+
+The default install creates the `git-mirror-sync` ServiceAccount used by sync Jobs without extra RBAC permissions. It also creates a `git-mirror-known-hosts` ConfigMap template with the `known_hosts` key expected by the sync runner. Populate that ConfigMap with verified SSH host keys for the Git hosts you mirror before running sync Jobs.
+
 ## Sync Runner
 
 Exact mode mirrors all refs and uses:

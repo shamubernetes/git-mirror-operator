@@ -88,6 +88,8 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&githubWebhookAddr, "github-webhook-bind-address", ":8082",
 		"The address the GitHub webhook endpoint binds to.")
+	flag.StringVar(&githubWebhookAddr, "webhook-bind-address", ":8082",
+		"Deprecated: use --github-webhook-bind-address.")
 	flag.StringVar(&syncImage, "sync-image", getenv("SYNC_IMAGE", "ghcr.io/shamubernetes/git-mirror-sync:latest"),
 		"The sync runner image used by GitMirror Jobs.")
 	opts := zap.Options{

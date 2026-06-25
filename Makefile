@@ -114,6 +114,14 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: check-generated-drift
+check-generated-drift: ## Verify generated files and module metadata are current.
+	git diff --exit-code -- go.mod go.sum api config
+	@test -z "$$(git status --porcelain --untracked-files=all -- api config)" || { \
+		git status --short --untracked-files=all -- api config; \
+		exit 1; \
+	}
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
@@ -136,8 +144,10 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	@status=0; \
+	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v || status=$$?; \
+	$(MAKE) cleanup-test-e2e || { cleanup_status=$$?; [ $$status -ne 0 ] || status=$$cleanup_status; }; \
+	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests

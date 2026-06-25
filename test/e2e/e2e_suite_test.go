@@ -40,6 +40,9 @@ var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/git-mirror-operator:v0.0.1"
+
+	// syncContractImage is a test-only sync runner image that validates the Job contract.
+	syncContractImage = "example.com/git-mirror-sync-contract:v0.0.1"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -63,6 +66,16 @@ var _ = BeforeSuite(func() {
 	By("loading the manager(Operator) image on Kind")
 	err = utils.LoadImageToKindClusterWithName(projectImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+
+	By("building the sync contract test image")
+	cmd = exec.Command("docker", "build", "-f", "test/e2e/sync-contract.Dockerfile",
+		"-t", syncContractImage, "test/e2e")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the sync contract test image")
+
+	By("loading the sync contract test image on Kind")
+	err = utils.LoadImageToKindClusterWithName(syncContractImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the sync contract test image into Kind")
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
