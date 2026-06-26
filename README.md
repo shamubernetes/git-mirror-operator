@@ -121,9 +121,29 @@ source:
 
 `githubApp.appIDSecretRef` may contain either the GitHub App client ID or app ID. The sync runner creates a short-lived installation access token inside the Job, uses `x-access-token` as the HTTPS username, and uses the installation token as the HTTPS password. For GitHub Enterprise Server, set `githubApp.apiURL` to the server REST API base URL.
 
-Exact mode mirrors branches and tags, and prunes target branch and tag refs that no longer exist at the source. It intentionally ignores provider-internal refs such as GitHub `refs/pull/*`, GitLab `refs/merge-requests/*`, Gerrit `refs/changes/*`, and any other non-branch/tag refs from the source clone. `mirror.includeTags` does not apply in exact mode.
+## Mirror Modes
 
-This makes GitHub to Codeberg/Forgejo mirroring safe because provider-generated refs are not pushed to hidden or protected ref namespaces on the target.
+Mirror modes operate on normal Git repository refs: branches under `refs/heads/*` and tags under `refs/tags/*`. Provider-internal refs are intentionally ignored for cross-provider safety.
+
+| Mode | What it pushes | Prunes target branches/tags | Pushes provider-internal refs |
+|---|---|---:|---:|
+| `exact` | Branches and tags | Yes | No |
+| `additive` | Branches and tags by default; branches only when `includeTags: false` | No | No |
+
+Use `exact` when the target should match the source branches and tags. It prunes target branch and tag refs that no longer exist at the source. Use `additive` when the target should retain old branches or tags as an archive.
+
+GitHub exposes pull request refs under `refs/pull/*`. GitLab exposes merge request refs under `refs/merge-requests/*`, and Gerrit-style servers may expose change refs under `refs/changes/*`. Codeberg and Forgejo can reject these provider-internal refs, and they are not useful for normal repository backup. The operator intentionally syncs branches and tags instead of raw provider ref namespaces; raw `git push --mirror` behavior is not part of normal sync behavior.
+
+For GitHub to Codeberg/Forgejo mirroring, use these branch/tag semantics.
+
+Exact mode example for keeping Codeberg branches and tags matched to GitHub:
+
+```yaml
+mirror:
+  mode: exact
+```
+
+Its sync command shape is:
 
 ```bash
 git clone --bare "$SOURCE_URL" /tmp/repo.git
@@ -131,9 +151,15 @@ git -C /tmp/repo.git push --prune "$TARGET_URL" '+refs/heads/*:refs/heads/*'
 git -C /tmp/repo.git push --prune "$TARGET_URL" '+refs/tags/*:refs/tags/*'
 ```
 
-Additive mode pushes branches and, by default, tags without pruning. Like exact mode, it only pushes normal branch and tag refs and ignores provider-internal refs.
+Additive mode example for archival behavior:
 
-With tags:
+```yaml
+mirror:
+  mode: additive
+  includeTags: true
+```
+
+Its sync command shape with tags is:
 
 ```bash
 git clone --bare "$SOURCE_URL" /tmp/repo.git
@@ -141,7 +167,7 @@ git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 git -C /tmp/repo.git push "$TARGET_URL" 'refs/tags/*:refs/tags/*'
 ```
 
-Without tags:
+With `includeTags: false`, additive mode only pushes branches:
 
 ```bash
 git clone --bare "$SOURCE_URL" /tmp/repo.git

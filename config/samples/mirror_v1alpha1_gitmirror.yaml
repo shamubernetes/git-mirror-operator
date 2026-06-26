@@ -39,6 +39,9 @@ spec:
           name: source-repo-target-basic
           key: password
   mirror:
+    # exact mirrors normal branches and tags, prunes target branches/tags
+    # deleted from the source, and ignores provider-internal refs such as
+    # GitHub refs/pull/* for safe GitHub-to-Codeberg/Forgejo mirroring.
     mode: exact
   fallback:
     schedule: "0 */6 * * *"
