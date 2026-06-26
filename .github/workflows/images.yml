@@ -92,13 +92,13 @@ jobs:
         run: make check-known-hosts-current
 
   images:
-    name: Publish ${{ matrix.name }} image
+    name: Build ${{ matrix.name }} image (${{ matrix.arch }})
     needs:
       - lint
       - test
       - test-e2e
       - known-hosts
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,22 +106,92 @@ jobs:
           - name: operator
             image: git-mirror-operator
             dockerfile: Dockerfile
+            platform: linux/amd64
+            arch: amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+          - name: operator
+            image: git-mirror-operator
+            dockerfile: Dockerfile
+            platform: linux/arm64
+            arch: arm64
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
           - name: sync
             image: git-mirror-sync
             dockerfile: Dockerfile.sync
+            platform: linux/amd64
+            arch: amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+          - name: sync
+            image: git-mirror-sync
+            dockerfile: Dockerfile.sync
+            platform: linux/arm64
+            arch: arm64
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Blacksmith Docker builder
+        uses: useblacksmith/setup-docker-builder@v1
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+
+      - name: Build and push platform image by digest
+        id: build
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: Export digest
+        run: |
+          mkdir -p "/tmp/digests/${{ matrix.image }}"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${{ matrix.image }}/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: /tmp/digests/${{ matrix.image }}/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifests:
+    name: Publish ${{ matrix.name }} manifest
+    needs: images
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: operator
+            image: git-mirror-operator
+          - name: sync
+            image: git-mirror-sync
+
+    steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -140,16 +210,55 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Build and publish image
-        uses: docker/build-push-action@v7
+      - name: Download platform digests
+        uses: actions/download-artifact@v8
         with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          provenance: true
-          sbom: true
+          pattern: digests-${{ matrix.image }}-*
+          path: /tmp/digests/${{ matrix.image }}
+          merge-multiple: true
+
+      - name: Create and publish multi-arch manifest
+        shell: bash
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          cd "/tmp/digests/${{ matrix.image }}"
+          refs=()
+          for digest_file in *; do
+            [ -f "$digest_file" ] || continue
+            refs+=("${REGISTRY}/${IMAGE_NAMESPACE}/${{ matrix.image }}@sha256:${digest_file}")
+          done
+
+          if [ "${#refs[@]}" -ne 2 ]; then
+            printf 'expected 2 platform digests for %s, found %s\n' "${{ matrix.image }}" "${#refs[@]}" >&2
+            exit 1
+          fi
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker buildx imagetools create \
+              --tag "$tag" \
+              "${refs[@]}"
+          done <<< "$TAGS"
+
+  release:
+    name: Create GitHub Release
+    needs: manifests
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          body: |
+            Container images:
+
+            - `ghcr.io/${{ env.IMAGE_NAMESPACE }}/git-mirror-operator:${{ github.ref_name }}`
+            - `ghcr.io/${{ env.IMAGE_NAMESPACE }}/git-mirror-sync:${{ github.ref_name }}`

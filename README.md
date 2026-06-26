@@ -185,7 +185,7 @@ Sync Jobs are annotated with the GitMirror generation that created them. When th
 
 ## Images
 
-The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR from semantic version tags after lint, unit/envtest, and e2e checks pass:
+The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR from semantic version tags after lint, unit/envtest, e2e, and known-hosts checks pass. Each architecture is built on a native Blacksmith 2-vCPU runner, then a follow-up job creates the multi-arch manifests and a GitHub Release:
 
 - `ghcr.io/shamubernetes/git-mirror-operator`
 - `ghcr.io/shamubernetes/git-mirror-sync`
