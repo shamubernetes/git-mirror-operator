@@ -155,6 +155,8 @@ git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 - `status.lastCompletedJobName`: latest finished Job reflected into status.
 - `status.pendingResync`: true when a push arrived while another sync Job was already active.
 
+Sync Jobs are annotated with the GitMirror generation that created them. When the spec changes, older failed or active Jobs stay visible in Kubernetes but no longer block scheduling a fresh Job for the new generation.
+
 ## Images
 
 The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR from semantic version tags after lint, unit/envtest, and e2e checks pass:

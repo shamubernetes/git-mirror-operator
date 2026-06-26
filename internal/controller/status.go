@@ -13,7 +13,6 @@ import (
 )
 
 func ApplyWebhookState(mirror *mirrorv1alpha1.GitMirror, deliveryID string, now metav1.Time, activeJobExists bool) bool {
-	mirror.Status.ObservedGeneration = mirror.Generation
 	mirror.Status.LastWebhookAt = now.DeepCopy()
 	mirror.Status.LastDeliveryID = deliveryID
 	if activeJobExists {
@@ -28,7 +27,6 @@ func ApplyWebhookState(mirror *mirrorv1alpha1.GitMirror, deliveryID string, now 
 }
 
 func ApplyWebhookIntent(mirror *mirrorv1alpha1.GitMirror, deliveryID, revision string, now metav1.Time) {
-	mirror.Status.ObservedGeneration = mirror.Generation
 	mirror.Status.LastWebhookAt = now.DeepCopy()
 	mirror.Status.LastDeliveryID = deliveryID
 	if revision != "" {
@@ -39,13 +37,38 @@ func ApplyWebhookIntent(mirror *mirrorv1alpha1.GitMirror, deliveryID, revision s
 }
 
 func ApplySyncScheduled(mirror *mirrorv1alpha1.GitMirror, jobName string, now metav1.Time) {
+	mirror.Status.ObservedGeneration = mirror.Generation
 	mirror.Status.LastTriggeredAt = now.DeepCopy()
 	mirror.Status.LastJobName = jobName
 	mirror.Status.PendingResync = false
 	setCondition(mirror, "SyncPending", metav1.ConditionFalse, "JobScheduled", "Sync job scheduled")
 }
 
+func ApplySyncScheduledForGeneration(mirror *mirrorv1alpha1.GitMirror, jobName string, generation int64, now metav1.Time) bool {
+	if mirror.Generation != generation {
+		return false
+	}
+	ApplySyncScheduled(mirror, jobName, now)
+	return true
+}
+
 func ApplyCompletedJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, now metav1.Time) bool {
+	mirror.Status.ObservedGeneration = mirror.Generation
+	return applyCompletedJobStatus(mirror, job, now, true, mirror.Generation)
+}
+
+func ApplyCompletedJobStatusForGeneration(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, generation int64, now metav1.Time) bool {
+	if mirror.Generation != generation {
+		return false
+	}
+	return ApplyCompletedJobStatus(mirror, job, now)
+}
+
+func ApplyCompletedLegacyJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, now metav1.Time) bool {
+	return applyCompletedJobStatus(mirror, job, now, false, mirror.Status.ObservedGeneration)
+}
+
+func applyCompletedJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job, now metav1.Time, updatePending bool, conditionGeneration int64) bool {
 	mirror.Status.LastJobName = job.Name
 	mirror.Status.LastCompletedJobName = job.Name
 	if isJobComplete(job) {
@@ -54,11 +77,14 @@ func ApplyCompletedJobStatus(mirror *mirrorv1alpha1.GitMirror, job *batchv1.Job,
 		if revision := job.Annotations[jobs.AnnotationRevision]; revision != "" {
 			mirror.Status.LastMirroredRevision = revision
 		}
-		setCondition(mirror, "Ready", metav1.ConditionTrue, "SyncSucceeded", "Last sync job completed successfully")
+		setConditionForGeneration(mirror, "Ready", conditionGeneration, metav1.ConditionTrue, "SyncSucceeded", "Last sync job completed successfully")
 	} else if failed, reason := isJobFailed(job); failed {
 		mirror.Status.LastFailureAt = now.DeepCopy()
 		mirror.Status.LastError = reason
-		setCondition(mirror, "Ready", metav1.ConditionFalse, "SyncFailed", reason)
+		setConditionForGeneration(mirror, "Ready", conditionGeneration, metav1.ConditionFalse, "SyncFailed", reason)
+	}
+	if !updatePending {
+		return false
 	}
 	followup := mirror.Status.PendingResync
 	if followup {
@@ -113,10 +139,14 @@ func isJobFailed(job *batchv1.Job) (bool, string) {
 }
 
 func setCondition(mirror *mirrorv1alpha1.GitMirror, conditionType string, status metav1.ConditionStatus, reason, message string) {
+	setConditionForGeneration(mirror, conditionType, mirror.Generation, status, reason, message)
+}
+
+func setConditionForGeneration(mirror *mirrorv1alpha1.GitMirror, conditionType string, observedGeneration int64, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&mirror.Status.Conditions, metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
-		ObservedGeneration: mirror.Generation,
+		ObservedGeneration: observedGeneration,
 		Reason:             reason,
 		Message:            message,
 	})

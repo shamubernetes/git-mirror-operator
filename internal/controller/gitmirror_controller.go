@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,17 +65,58 @@ func (r *GitMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	now := metav1.NewTime(r.now())
+	currentGenerationJobs := jobsForGeneration(jobList.Items, mirror.Generation)
 
-	if result, handled, err := r.reconcileCompletedJobs(ctx, req, &mirror, jobList.Items, now); err != nil || handled {
+	if result, handled, err := r.reconcileCompletedJobs(ctx, req, &mirror, currentGenerationJobs, now); err != nil || handled {
 		return result, err
 	}
 
-	active := activeJobExists(jobList.Items)
+	active := activeJobExists(currentGenerationJobs)
+	if result, handled, err := r.reconcileUnobservedGeneration(ctx, req, &mirror, active, now); err != nil || handled {
+		return result, err
+	}
+
 	if result, handled, err := r.reconcilePendingResync(ctx, req, &mirror, active, now); err != nil || handled {
 		return result, err
 	}
 
 	return r.reconcileFallback(ctx, req, &mirror, active, now)
+}
+
+func (r *GitMirrorReconciler) reconcileUnobservedGeneration(ctx context.Context, req ctrl.Request, mirror *mirrorv1alpha1.GitMirror, active bool, now metav1.Time) (ctrl.Result, bool, error) {
+	if mirror.Status.ObservedGeneration == mirror.Generation {
+		return ctrl.Result{}, false, nil
+	}
+	if active {
+		return ctrl.Result{}, false, nil
+	}
+
+	var current mirrorv1alpha1.GitMirror
+	if err := r.Get(ctx, req.NamespacedName, &current); err != nil {
+		return ctrl.Result{}, false, err
+	}
+	if current.Status.ObservedGeneration == current.Generation {
+		return ctrl.Result{}, false, nil
+	}
+
+	scheduledGeneration := current.Generation
+	triggerID := fmt.Sprintf("generation-%d", scheduledGeneration)
+	acquired, jobName, err := r.createLockedSyncJob(ctx, &current, triggerID, current.Status.LastRequestedRevision)
+	if err != nil {
+		return ctrl.Result{}, false, err
+	}
+	if !acquired {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, true, nil
+	}
+
+	if err := PatchGitMirrorStatus(ctx, r.Client, req.NamespacedName, func(current *mirrorv1alpha1.GitMirror) {
+		if current.Generation == scheduledGeneration {
+			ApplySyncScheduled(current, jobName, now)
+		}
+	}); err != nil {
+		return ctrl.Result{}, false, err
+	}
+	return ctrl.Result{}, true, nil
 }
 
 func (r *GitMirrorReconciler) reconcileCompletedJobs(ctx context.Context, req ctrl.Request, mirror *mirrorv1alpha1.GitMirror, jobItems []batchv1.Job, now metav1.Time) (ctrl.Result, bool, error) {
@@ -83,7 +125,7 @@ func (r *GitMirrorReconciler) reconcileCompletedJobs(ctx context.Context, req ct
 		if !JobFinished(job) || mirror.Status.LastCompletedJobName == job.Name {
 			continue
 		}
-		if mirror.Status.LastJobName != "" && mirror.Status.LastJobName != job.Name {
+		if mirror.Status.LastJobName != "" && mirror.Status.LastJobName != job.Name && jobNameExists(jobItems, mirror.Status.LastJobName) {
 			continue
 		}
 		var followup bool
@@ -92,7 +134,14 @@ func (r *GitMirrorReconciler) reconcileCompletedJobs(ctx context.Context, req ct
 			if current.Status.LastCompletedJobName == job.Name {
 				return
 			}
-			followup = ApplyCompletedJobStatus(current, job, now)
+			if generation, annotated, valid := jobGenerationAnnotation(job); annotated {
+				if !valid {
+					return
+				}
+				followup = ApplyCompletedJobStatusForGeneration(current, job, generation, now)
+			} else {
+				followup = ApplyCompletedLegacyJobStatus(current, job, now)
+			}
 			followupRevision = current.Status.LastRequestedRevision
 		}); err != nil {
 			return ctrl.Result{}, false, err
@@ -109,7 +158,7 @@ func (r *GitMirrorReconciler) reconcileCompletedJobs(ctx context.Context, req ct
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, true, nil
 			}
 			if err := PatchGitMirrorStatus(ctx, r.Client, req.NamespacedName, func(current *mirrorv1alpha1.GitMirror) {
-				ApplySyncScheduled(current, jobName, now)
+				ApplySyncScheduledForGeneration(current, jobName, mirror.Generation, now)
 			}); err != nil {
 				return ctrl.Result{}, false, err
 			}
@@ -130,6 +179,7 @@ func (r *GitMirrorReconciler) reconcilePendingResync(ctx context.Context, req ct
 	if !current.Status.PendingResync {
 		return ctrl.Result{}, false, nil
 	}
+	scheduledGeneration := current.Generation
 	triggerID := current.Status.LastDeliveryID
 	if triggerID == "" {
 		triggerID = "resync-" + now.Format(time.RFC3339Nano)
@@ -142,7 +192,7 @@ func (r *GitMirrorReconciler) reconcilePendingResync(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, true, nil
 	}
 	if err := PatchGitMirrorStatus(ctx, r.Client, req.NamespacedName, func(current *mirrorv1alpha1.GitMirror) {
-		ApplySyncScheduled(current, jobName, now)
+		ApplySyncScheduledForGeneration(current, jobName, scheduledGeneration, now)
 	}); err != nil {
 		return ctrl.Result{}, false, err
 	}
@@ -177,7 +227,7 @@ func (r *GitMirrorReconciler) reconcileFallback(ctx context.Context, req ctrl.Re
 	if err := PatchGitMirrorStatus(ctx, r.Client, req.NamespacedName, func(current *mirrorv1alpha1.GitMirror) {
 		create := ApplyWebhookState(current, "scheduled", now, active)
 		if create && scheduledJobName != "" {
-			ApplySyncScheduled(current, scheduledJobName, now)
+			ApplySyncScheduledForGeneration(current, scheduledJobName, mirror.Generation, now)
 		}
 	}); err != nil {
 		return ctrl.Result{}, err
@@ -251,7 +301,7 @@ func (r *GitMirrorReconciler) acquireSyncLease(ctx context.Context, mirror *mirr
 		currentHolder = *existing.Spec.HolderIdentity
 	}
 	if currentHolder != "" && currentHolder != holder {
-		active, err := r.jobNameActive(ctx, mirror.Namespace, currentHolder)
+		active, err := r.jobNameActiveForGeneration(ctx, mirror.Namespace, currentHolder, mirror.Generation)
 		if err != nil {
 			return false, err
 		}
@@ -288,7 +338,7 @@ func (r *GitMirrorReconciler) releaseSyncLease(ctx context.Context, mirror *mirr
 	return nil
 }
 
-func (r *GitMirrorReconciler) jobNameActive(ctx context.Context, namespace, name string) (bool, error) {
+func (r *GitMirrorReconciler) jobNameActiveForGeneration(ctx context.Context, namespace, name string, generation int64) (bool, error) {
 	var job batchv1.Job
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &job); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -296,7 +346,7 @@ func (r *GitMirrorReconciler) jobNameActive(ctx context.Context, namespace, name
 		}
 		return false, err
 	}
-	return JobActive(&job), nil
+	return JobActive(&job) && jobGenerationMatches(&job, generation), nil
 }
 
 func activeJobExists(items []batchv1.Job) bool {
@@ -306,6 +356,48 @@ func activeJobExists(items []batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+func jobsForGeneration(items []batchv1.Job, generation int64) []batchv1.Job {
+	current := make([]batchv1.Job, 0, len(items))
+	for i := range items {
+		if jobGenerationMatches(&items[i], generation) {
+			current = append(current, items[i])
+		}
+	}
+	return current
+}
+
+func jobNameExists(items []batchv1.Job, name string) bool {
+	for i := range items {
+		if items[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func jobGenerationMatches(job *batchv1.Job, generation int64) bool {
+	if job == nil {
+		return false
+	}
+	parsed, annotated, valid := jobGenerationAnnotation(job)
+	if !annotated {
+		return true
+	}
+	return valid && parsed == generation
+}
+
+func jobGenerationAnnotation(job *batchv1.Job) (int64, bool, bool) {
+	if job == nil {
+		return 0, false, false
+	}
+	value := job.Annotations[jobs.AnnotationGeneration]
+	if value == "" {
+		return 0, false, false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return parsed, true, err == nil
 }
 
 func SyncLeaseName(mirror *mirrorv1alpha1.GitMirror) string {

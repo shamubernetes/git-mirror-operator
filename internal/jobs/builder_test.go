@@ -326,6 +326,20 @@ func TestBuildSyncJobAnnotatesRequestedRevision(t *testing.T) {
 	}
 }
 
+func TestBuildSyncJobAnnotatesGitMirrorGeneration(t *testing.T) {
+	mirror := baseMirror()
+	mirror.Generation = 7
+
+	syncJob, err := jobs.BuildSyncJob(mirror, jobs.Options{DefaultImage: "example/git-mirror-sync:dev"})
+	if err != nil {
+		t.Fatalf("expected job: %v", err)
+	}
+
+	if got := syncJob.Job.Annotations[jobs.AnnotationGeneration]; got != "7" {
+		t.Fatalf("expected generation annotation 7, got %q", got)
+	}
+}
+
 func TestBuildSyncJobForAdditiveModeWithTags(t *testing.T) {
 	mirror := baseMirror()
 	mirror.Spec.Mirror.Mode = "additive"

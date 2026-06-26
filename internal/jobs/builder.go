@@ -18,17 +18,18 @@ import (
 )
 
 const (
-	AppName             = "git-mirror-operator"
-	LabelName           = "app.kubernetes.io/name"
-	LabelGitMirror      = "mirror.shamubernetes.com/gitmirror"
-	LabelDeliveryID     = "mirror.shamubernetes.com/delivery-id"
-	LabelSourceOwner    = "mirror.shamubernetes.com/source-owner"
-	LabelSourceRepo     = "mirror.shamubernetes.com/source-repo"
-	AnnotationRevision  = "mirror.shamubernetes.com/revision"
-	AnnotationGitMirror = "mirror.shamubernetes.com/gitmirror-name"
-	AnnotationOwner     = "mirror.shamubernetes.com/full-source-owner"
-	AnnotationRepo      = "mirror.shamubernetes.com/full-source-repo"
-	DefaultKnownHostsCM = "git-mirror-known-hosts"
+	AppName              = "git-mirror-operator"
+	LabelName            = "app.kubernetes.io/name"
+	LabelGitMirror       = "mirror.shamubernetes.com/gitmirror"
+	LabelDeliveryID      = "mirror.shamubernetes.com/delivery-id"
+	LabelSourceOwner     = "mirror.shamubernetes.com/source-owner"
+	LabelSourceRepo      = "mirror.shamubernetes.com/source-repo"
+	AnnotationRevision   = "mirror.shamubernetes.com/revision"
+	AnnotationGeneration = "mirror.shamubernetes.com/generation"
+	AnnotationGitMirror  = "mirror.shamubernetes.com/gitmirror-name"
+	AnnotationOwner      = "mirror.shamubernetes.com/full-source-owner"
+	AnnotationRepo       = "mirror.shamubernetes.com/full-source-repo"
+	DefaultKnownHostsCM  = "git-mirror-known-hosts"
 )
 
 type Options struct {
@@ -114,6 +115,7 @@ func BuildSyncJob(mirror *mirrorv1alpha1.GitMirror, opts Options) (*SyncJob, err
 	for key, value := range AnnotationsForMirror(mirror) {
 		annotations[key] = value
 	}
+	annotations[AnnotationGeneration] = strconv.FormatInt(mirror.Generation, 10)
 	if opts.Revision != "" {
 		annotations[AnnotationRevision] = opts.Revision
 	}
