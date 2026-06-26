@@ -96,12 +96,12 @@ type SecretKeyRef struct {
 }
 
 type MirrorSpec struct {
-	// Mode controls target ref behavior. exact mirrors all refs and prunes target refs that are absent
-	// from the source. additive pushes source heads and optionally tags without pruning target refs.
+	// Mode controls target ref behavior. exact mirrors branches and tags and prunes target refs
+	// that are absent from the source. additive pushes source heads and optionally tags without pruning target refs.
 	// +kubebuilder:validation:Enum=exact;additive
 	// +kubebuilder:default=exact
 	Mode string `json:"mode,omitempty"`
-	// IncludeTags applies only when mode is additive. Exact mode mirrors all refs, including tags.
+	// IncludeTags applies only when mode is additive. Exact mode always mirrors tags.
 	// +kubebuilder:default=true
 	IncludeTags bool `json:"includeTags,omitempty"`
 }

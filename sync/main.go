@@ -29,6 +29,11 @@ import (
 const defaultGitHubAPIURL = "https://api.github.com"
 const githubAppTokenRequestTimeout = 30 * time.Second
 const preparedCredentialDirName = "git-mirror-credentials"
+const defaultMirrorRepoPath = "/tmp/repo.git"
+const headsRefSpec = "refs/heads/*:refs/heads/*"
+const tagsRefSpec = "refs/tags/*:refs/tags/*"
+const forceHeadsRefSpec = "+" + headsRefSpec
+const forceTagsRefSpec = "+" + tagsRefSpec
 
 var githubAppHTTPClient = &http.Client{Timeout: githubAppTokenRequestTimeout}
 
@@ -40,6 +45,7 @@ type Config struct {
 	SourceAuth     EndpointAuth
 	TargetAuth     EndpointAuth
 	KnownHostsPath string
+	RepoPath       string
 }
 
 type EndpointAuth struct {
@@ -89,14 +95,22 @@ func Run(cfg Config) error {
 		return err
 	}
 	for _, args := range commands {
-		log.Printf("running %s", safeCommand(args))
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
 		authEnv, err := gitAuthEnv(cfg, authForCommand(cfg, args))
 		if err != nil {
 			return err
 		}
+		skip, err := shouldSkipEmptyTagPush(args, authEnv)
+		if err != nil {
+			return err
+		}
+		if skip {
+			log.Printf("skipping %s: source and target have no tags", safeCommand(args))
+			continue
+		}
+		log.Printf("running %s", safeCommand(args))
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		cmd.Env = append(os.Environ(), authEnv...)
 		if err := cmd.Run(); err != nil {
 			return err
@@ -116,22 +130,118 @@ func BuildGitCommands(cfg Config) ([][]string, error) {
 	if mode == "" {
 		mode = "exact"
 	}
+	repoPath := mirrorRepoPath(cfg)
 	commands := [][]string{
-		{"git", "clone", "--mirror", cfg.SourceURL, "/tmp/repo.git"},
+		{"git", "clone", "--bare", cfg.SourceURL, repoPath},
 	}
 	switch mode {
 	case "exact":
-		commands = append(commands, []string{"git", "-C", "/tmp/repo.git", "push", "--mirror", cfg.TargetURL})
+		commands = append(commands,
+			[]string{"git", "-C", repoPath, "push", "--prune", cfg.TargetURL, forceHeadsRefSpec},
+			[]string{"git", "-C", repoPath, "push", "--prune", cfg.TargetURL, forceTagsRefSpec},
+		)
 	case "additive":
-		push := []string{"git", "-C", "/tmp/repo.git", "push", cfg.TargetURL, "refs/heads/*:refs/heads/*"}
+		commands = append(commands, []string{"git", "-C", repoPath, "push", cfg.TargetURL, headsRefSpec})
 		if cfg.IncludeTags {
-			push = append(push, "refs/tags/*:refs/tags/*")
+			commands = append(commands, []string{"git", "-C", repoPath, "push", cfg.TargetURL, tagsRefSpec})
 		}
-		commands = append(commands, push)
 	default:
 		return nil, fmt.Errorf("unsupported MIRROR_MODE %q", mode)
 	}
 	return commands, nil
+}
+
+func mirrorRepoPath(cfg Config) string {
+	if cfg.RepoPath != "" {
+		return cfg.RepoPath
+	}
+	return defaultMirrorRepoPath
+}
+
+func shouldSkipEmptyTagPush(args []string, env []string) (bool, error) {
+	if !isTagWildcardPush(args) {
+		return false, nil
+	}
+	repoPath, ok := commandRepoPath(args)
+	if !ok {
+		return false, nil
+	}
+	hasSourceTags, err := hasLocalRefs(repoPath, "refs/tags")
+	if err != nil {
+		return false, err
+	}
+	if hasSourceTags {
+		return false, nil
+	}
+	targetURL, ok := pushTargetURL(args)
+	if !ok {
+		return false, nil
+	}
+	hasTargetTags, err := hasRemoteTags(targetURL, env)
+	if err != nil {
+		return false, err
+	}
+	return !hasTargetTags, nil
+}
+
+func isTagWildcardPush(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	hasPush := false
+	hasTagRefSpec := false
+	for _, arg := range args {
+		if arg == "push" {
+			hasPush = true
+		}
+		if arg == tagsRefSpec || arg == forceTagsRefSpec {
+			hasTagRefSpec = true
+		}
+	}
+	return hasPush && hasTagRefSpec
+}
+
+func commandRepoPath(args []string) (string, bool) {
+	for i, arg := range args {
+		if arg == "-C" && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+func pushTargetURL(args []string) (string, bool) {
+	for i, arg := range args {
+		if arg != "push" {
+			continue
+		}
+		for _, candidate := range args[i+1:] {
+			if strings.HasPrefix(candidate, "-") {
+				continue
+			}
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func hasLocalRefs(repoPath, prefix string) (bool, error) {
+	cmd := exec.Command("git", "-C", repoPath, "for-each-ref", "--format=%(refname)", "--count=1", prefix)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+func hasRemoteTags(targetURL string, env []string) (bool, error) {
+	cmd := exec.Command("git", "ls-remote", "--tags", "--refs", targetURL)
+	cmd.Env = append(os.Environ(), env...)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) != "", nil
 }
 
 func endpointAuthFromEnv(prefix string) EndpointAuth {

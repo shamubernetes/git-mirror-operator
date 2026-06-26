@@ -30,7 +30,7 @@ Important spec fields:
 - `source.url`, `source.auth` or legacy `source.sshSecretRef`
 - `target.url`, `target.auth` or legacy `target.sshSecretRef`
 - `mirror.mode`: `exact` or `additive`
-- `mirror.includeTags`: additive mode only; exact mode mirrors all refs including tags
+- `mirror.includeTags`: additive mode only; exact mode always mirrors tags
 - `fallback.schedule`: optional cron expression
 - `job.image`, `job.backoffLimit`, `job.activeDeadlineSeconds`, `job.ttlSecondsAfterFinished`, `job.resources`
 
@@ -121,26 +121,30 @@ source:
 
 `githubApp.appIDSecretRef` may contain either the GitHub App client ID or app ID. The sync runner creates a short-lived installation access token inside the Job, uses `x-access-token` as the HTTPS username, and uses the installation token as the HTTPS password. For GitHub Enterprise Server, set `githubApp.apiURL` to the server REST API base URL.
 
-Exact mode mirrors all refs, including tags, and prunes target refs that no longer exist at the source. `mirror.includeTags` does not apply in exact mode.
+Exact mode mirrors branches and tags, and prunes target branch and tag refs that no longer exist at the source. It intentionally ignores provider-internal refs such as GitHub `refs/pull/*`, GitLab `refs/merge-requests/*`, Gerrit `refs/changes/*`, and any other non-branch/tag refs from the source clone. `mirror.includeTags` does not apply in exact mode.
+
+This makes GitHub to Codeberg/Forgejo mirroring safe because provider-generated refs are not pushed to hidden or protected ref namespaces on the target.
 
 ```bash
-git clone --mirror "$SOURCE_URL" /tmp/repo.git
-git -C /tmp/repo.git push --mirror "$TARGET_URL"
+git clone --bare "$SOURCE_URL" /tmp/repo.git
+git -C /tmp/repo.git push --prune "$TARGET_URL" '+refs/heads/*:refs/heads/*'
+git -C /tmp/repo.git push --prune "$TARGET_URL" '+refs/tags/*:refs/tags/*'
 ```
 
-Additive mode preserves target refs that no longer exist at the source and never prunes.
+Additive mode pushes branches and, by default, tags without pruning. Like exact mode, it only pushes normal branch and tag refs and ignores provider-internal refs.
 
 With tags:
 
 ```bash
-git clone --mirror "$SOURCE_URL" /tmp/repo.git
-git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
+git clone --bare "$SOURCE_URL" /tmp/repo.git
+git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
+git -C /tmp/repo.git push "$TARGET_URL" 'refs/tags/*:refs/tags/*'
 ```
 
 Without tags:
 
 ```bash
-git clone --mirror "$SOURCE_URL" /tmp/repo.git
+git clone --bare "$SOURCE_URL" /tmp/repo.git
 git -C /tmp/repo.git push "$TARGET_URL" 'refs/heads/*:refs/heads/*'
 ```
 
