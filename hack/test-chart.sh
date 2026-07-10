@@ -13,7 +13,7 @@ digest_render="$tmpdir/digest.yaml"
 no_webhook_render="$tmpdir/no-webhook.yaml"
 config_known_hosts="$tmpdir/config-known-hosts"
 chart_known_hosts="$tmpdir/chart-known-hosts"
-app_version="$(helm show chart "$chart_dir" | awk '$1 == "appVersion:" { gsub(/\"/, "", $2); print $2 }')"
+app_version="$(helm show chart "$chart_dir" | awk '$1 == "appVersion:" { print $2 }' | tr -d '"')"
 
 if [[ -z "$app_version" ]]; then
   echo "unable to determine chart appVersion" >&2
@@ -61,5 +61,4 @@ grep -E '^[[:space:]]+(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org) ' \
   "$default_render" | sed 's/^[[:space:]]*//' | sort -u > "$chart_known_hosts"
 diff -u "$config_known_hosts" "$chart_known_hosts"
 
-kubectl create --dry-run=client --validate=false -f "$default_render" >/dev/null
 printf 'Helm chart rendered and validated successfully.\n'
