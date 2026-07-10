@@ -126,6 +126,10 @@ check-generated-drift: ## Verify generated files and module metadata are current
 check-known-hosts-current: ## Verify default known_hosts entries match current upstream host keys.
 	./hack/verify-known-hosts-current.sh
 
+.PHONY: test-chart
+test-chart: ## Lint and render the Helm chart, including digest and feature toggles.
+	./hack/test-chart.sh
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager and teardown are enabled by default for local runs. CI can skip them with:

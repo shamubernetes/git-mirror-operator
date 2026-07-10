@@ -185,14 +185,29 @@ Sync Jobs are annotated with the GitMirror generation that created them. When th
 
 ## Images
 
-The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images to GHCR from semantic version tags after lint, unit/envtest, e2e, and known-hosts checks pass. Each architecture is built on a native Blacksmith 2-vCPU runner, then a follow-up job creates the multi-arch manifests and a GitHub Release:
+The `Release Images` GitHub Actions workflow publishes multi-architecture `linux/amd64` and `linux/arm64` images and an OCI Helm chart from semantic version tags after lint, unit/envtest, e2e, known-hosts, and chart checks pass. Each architecture is built on a native Blacksmith 2-vCPU runner, then follow-up jobs create the multi-arch manifests, publish the chart, and create a GitHub Release:
 
 - `ghcr.io/shamubernetes/git-mirror-operator`
 - `ghcr.io/shamubernetes/git-mirror-sync`
+- `oci://ghcr.io/shamubernetes/charts/git-mirror-operator`
 
 Published tags include the release tag, semver aliases like `0.1` for `v0.1.0`, `sha-<commit>`, and `latest`.
 
 The default kustomize install points the manager at `ghcr.io/shamubernetes/git-mirror-operator:latest` and configures Jobs to use `ghcr.io/shamubernetes/git-mirror-sync:latest`. Pin those image tags or digests in your GitOps overlay for production.
+
+## Helm
+
+Install a released chart from GHCR:
+
+```bash
+helm install git-mirror-operator \
+  oci://ghcr.io/shamubernetes/charts/git-mirror-operator \
+  --version 0.3.0 \
+  --namespace git-mirror-operator-system \
+  --create-namespace
+```
+
+The chart installs the CRD, controller, RBAC, GitHub webhook Service, sync Job ServiceAccount, and verified default `known_hosts` ConfigMap. Environment-specific Ingresses, Secrets, and `GitMirror` resources remain outside the chart. Set `manager.image.digest` and `sync.image.digest` to pin immutable images. The CRD is retained by default when the release is removed.
 
 ## Development
 

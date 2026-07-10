@@ -1,0 +1,16 @@
+apiVersion: v2
+name: git-mirror-operator
+description: GitHub webhook driven Git repository mirroring operator
+home: https://github.com/shamubernetes/git-mirror-operator
+sources:
+  - https://github.com/shamubernetes/git-mirror-operator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - git
+  - kubernetes
+  - operator
+  - mirror
+annotations:
+  kubebuilder.io/generated-by: kubebuilder

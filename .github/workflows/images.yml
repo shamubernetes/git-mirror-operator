@@ -91,9 +91,23 @@ jobs:
       - name: Verify default known_hosts entries are current
         run: make check-known-hosts-current
 
+  chart-test:
+    name: Verify Helm chart
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Test chart
+        run: make test-chart
+
   images:
     name: Build ${{ matrix.name }} image (${{ matrix.arch }})
     needs:
+      - chart-test
       - lint
       - test
       - test-e2e
@@ -241,9 +255,47 @@ jobs:
               "${refs[@]}"
           done <<< "$TAGS"
 
+  chart:
+    name: Publish Helm chart
+    needs: manifests
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Prepare chart metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          sed -i "s/^version: .*/version: ${version}/" charts/git-mirror-operator/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${version}\"/" charts/git-mirror-operator/Chart.yaml
+
+      - name: Test and package chart
+        run: |
+          make test-chart
+          mkdir -p .release/charts
+          helm package charts/git-mirror-operator --destination .release/charts
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish chart
+        run: helm push .release/charts/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: helm-chart
+          path: .release/charts/*.tgz
+          if-no-files-found: error
+
   release:
     name: Create GitHub Release
-    needs: manifests
+    needs: chart
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -253,12 +305,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download Helm chart
+        uses: actions/download-artifact@v8
+        with:
+          name: helm-chart
+          path: .release/charts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           body: |
-            Container images:
+            Release artifacts:
 
             - `ghcr.io/${{ env.IMAGE_NAMESPACE }}/git-mirror-operator:${{ github.ref_name }}`
             - `ghcr.io/${{ env.IMAGE_NAMESPACE }}/git-mirror-sync:${{ github.ref_name }}`
+            - `oci://ghcr.io/${{ env.IMAGE_NAMESPACE }}/charts/git-mirror-operator`
+          files: .release/charts/*.tgz

@@ -1,0 +1,57 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    name: {{ include "git-mirror-operator.resourceName" (dict "suffix" "manager-role" "context" $) }}
+rules:
+    - apiGroups:
+        - ""
+      resources:
+        - events
+      verbs:
+        - create
+        - patch
+    - apiGroups:
+        - ""
+      resources:
+        - secrets
+      verbs:
+        - get
+    - apiGroups:
+        - batch
+      resources:
+        - jobs
+      verbs:
+        - create
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - create
+        - delete
+        - get
+        - list
+        - patch
+        - update
+        - watch
+    - apiGroups:
+        - mirror.shamubernetes.com
+      resources:
+        - gitmirrors
+      verbs:
+        - get
+        - list
+        - patch
+        - update
+        - watch
+    - apiGroups:
+        - mirror.shamubernetes.com
+      resources:
+        - gitmirrors/status
+      verbs:
+        - get
+        - patch
+        - update

@@ -1,0 +1,74 @@
+# Override the chart-derived resource names.
+nameOverride: ""
+fullnameOverride: ""
+
+manager:
+  replicas: 1
+  image:
+    repository: ghcr.io/shamubernetes/git-mirror-operator
+    # Defaults to Chart.appVersion when empty.
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  args:
+    - --leader-elect
+    - --github-webhook-bind-address=:8082
+  env: []
+  imagePullSecrets: []
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
+
+sync:
+  image:
+    repository: ghcr.io/shamubernetes/git-mirror-sync
+    # Defaults to Chart.appVersion when empty.
+    tag: ""
+    digest: ""
+  serviceAccount:
+    create: true
+
+webhook:
+  enabled: true
+  service:
+    port: 8082
+
+knownHosts:
+  enabled: true
+  # Additional OpenSSH known_hosts lines appended to the built-in verified defaults.
+  extraEntries: ""
+
+rbacHelpers:
+  enable: false
+
+crd:
+  enable: true
+  # Retain the CRD and GitMirror resources when the Helm release is removed.
+  keep: true
+
+metrics:
+  enable: true
+  port: 8443
+
+certManager:
+  enable: false
+
+prometheus:
+  enable: false
